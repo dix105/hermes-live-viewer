@@ -6,7 +6,7 @@
 <title>Live — Hermes</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
   :root {
@@ -27,7 +27,7 @@
   html, body {
     height: 100%; overflow: hidden;
     background: var(--bg); color: var(--text);
-    font-family: "IBM Plex Sans", "Helvetica Neue", sans-serif;
+    font-family: "Instrument Sans", "Helvetica Neue", sans-serif;
   }
   .app {
     height: 100dvh; max-height: 100dvh; overflow: hidden;
@@ -142,7 +142,7 @@
   .think summary { cursor: pointer; color: var(--gold); font-size: 11px; font-weight: 600; }
   .think pre {
     margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;
-    font-family: inherit; color: #c9c1b4;
+    font-family: "Newsreader", "Times New Roman", serif; font-style: italic; color: #c9c1b4;
   }
 
   .tools-box {
@@ -192,6 +192,20 @@
     border-radius: 999px; padding: 8px 14px; box-shadow: 0 6px 20px rgba(0,0,0,.35);
   }
   .jump.show { display: flex; align-items: center; gap: 6px; }
+  .media-card { margin: 0 0 8px; }
+  .media-card img, .media-card iframe {
+    display: block; max-width: 100%; max-height: 360px; border-radius: 10px;
+    border: 1px solid var(--line); background: #12110e;
+  }
+  .media-card iframe { width: 100%; height: 320px; }
+  .media-file {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 10px; background: #12110e;
+    color: var(--text); text-decoration: none; font-size: 13px;
+  }
+  .media-file.missing { color: var(--muted); }
+  .pending-media { margin: 8px 0 14px; }
+  .pending-media .tag { color: var(--gold); font-size: 12px; margin-bottom: 6px; }
   .usage-foot {
     margin: 8px 0 18px; padding: 8px 10px; border: 1px solid var(--line);
     border-radius: 10px; color: var(--muted); font-size: 12px; background: var(--panel);
@@ -424,14 +438,30 @@ function applyUpdates(items) {
   }
 }
 
+function renderMedia(list) {
+  if (!list || !list.length) return '';
+  return list.map(f => {
+    if (f.kind === 'image' && f.exists !== false) {
+      return `<div class="media-card"><img src="${esc(f.src)}" alt="${esc(f.name || '')}"></div>`;
+    }
+    if (f.kind === 'pdf' && f.exists !== false) {
+      return `<div class="media-card"><iframe src="${esc(f.src)}" title="${esc(f.name || 'pdf')}"></iframe>
+        <a class="media-file" href="${esc(f.src)}" target="_blank">${esc(f.name || 'PDF')}</a></div>`;
+    }
+    const cls = f.exists === false ? 'media-file missing' : 'media-file';
+    const note = f.exists === false ? ' · not on disk' : '';
+    return `<a class="${cls}" href="${f.exists===false?'#':esc(f.src)}" target="_blank">${esc(f.name || 'file')}${note}</a>`;
+  }).join('');
+}
 function itemHtml(m) {
   const think = m.thinking
     ? `<details class="think"${m.text ? '' : ' open'}><summary>Thinking</summary><pre>${esc(m.thinking)}</pre></details>` : '';
+  const media = renderMedia(m.media);
   const text = m.text ? `<div class="md">${md(m.text)}</div>` : '';
   const tools = m.tools || [];
-  if (!think && !text && !tools.length) return '';
+  if (!think && !text && !tools.length && !media) return '';
   const body = (think || text)
-    ? `<div class="bubble">${think}${text}<div class="time">${clock(m.timestamp)}</div></div>`
+    ? `<div class="bubble">${media}${think}${text}<div class="time">${clock(m.timestamp)}</div></div>`
     : '';
   const ids = [m.id].concat(m.merge_ids || []);
   return `<div class="row ${esc(m.kind)}${tools.length ? ' has-tools' : ''}" data-id="${m.id}" data-ids="${esc(ids.join(','))}">${body}${toolsBox(tools, ids)}</div>`;
@@ -494,6 +524,28 @@ function fmtTok(n) {
   if (n >= 1000) return (n/1000).toFixed(n >= 10000 ? 0 : 1) + 'k';
   return String(n);
 }
+
+function renderPending(files) {
+  if (viewId && parentId && viewId !== parentId) files = [];
+  let el = document.getElementById('pendingMedia');
+  if (!files || !files.length) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'pendingMedia';
+    el.className = 'row user has-tools pending-media';
+    col.appendChild(el);
+  }
+  el.innerHTML = `<div class="bubble" style="max-width:min(560px,84%)">
+    <div class="tag">receiving…</div>
+    ${renderMedia(files)}
+    <div class="time">pending</div>
+  </div>`;
+  if (stick) thread.scrollTop = thread.scrollHeight;
+}
+
 function renderUsage(rows) {
   document.querySelectorAll('.usage-foot').forEach(el => el.remove());
   if (!rows || !rows.length) return;
@@ -552,6 +604,7 @@ function startStream(id, after, token) {
     if (data.last_id) lastId = data.last_id;
     renderRunning(data.running_tools || []);
     if (data.usage) renderUsage(data.usage);
+    renderPending(data.pending_media || []);
     if (stick) thread.scrollTop = thread.scrollHeight;
   };
 }

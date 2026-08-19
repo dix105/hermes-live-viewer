@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+import os
+import re
 import sqlite3
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path("/root/.hermes/state.db")
@@ -22,6 +25,176 @@ def db() -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA query_only=ON")
     return con
+
+
+
+import mimetypes
+import re
+
+MEDIA_ROOTS = [
+    Path("/root/.hermes/cache").resolve(),
+    Path("/root/.hermes/images").resolve(),
+    Path("/root/.hermes/image_cache").resolve(),
+]
+_MEDIA_RE = re.compile(
+    r"(?:image_url:|saved at:|User sent an image:|User sent a file:|User sent a video:|User sent audio:)\s+(\S+)"
+    r"|!\[[^\]]*\]\(([^)]+)\)",
+    re.I,
+)
+
+def _clean_media_path(raw: str) -> str:
+    return (raw or "").strip().strip("[]()<>.,;~`\"'")
+
+
+def extract_media(text: str) -> list:
+    found = []
+    seen = set()
+    for m in _MEDIA_RE.finditer(text or ""):
+        raw = _clean_media_path(m.group(1) or m.group(2) or "")
+        if not raw or raw in seen:
+            continue
+        seen.add(raw)
+        name = Path(raw.split("?", 1)[0]).name
+        ext = Path(name).suffix.lower()
+        if raw.startswith("http://") or raw.startswith("https://"):
+            kind = "image" if ext in {".png", ".jpg", ".jpeg", ".gif", ".webp"} else ("pdf" if ext == ".pdf" else "link")
+            found.append({"kind": kind, "src": raw, "name": name, "exists": True})
+            continue
+        path = Path(raw).expanduser()
+        try:
+            resolved = path.resolve()
+        except Exception:
+            continue
+        if not any(str(resolved).startswith(str(root) + os.sep) or resolved == root for root in MEDIA_ROOTS):
+            continue
+        exists = resolved.is_file()
+        if ext in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+            kind = "image"
+        elif ext == ".pdf":
+            kind = "pdf"
+        else:
+            kind = "file"
+        found.append({
+            "kind": kind,
+            "src": "/api/live/file?p=" + quote(str(resolved), safe=""),
+            "name": name,
+            "exists": exists,
+            "path": str(resolved),
+        })
+    return found
+
+
+def display_text(text: str) -> str:
+    """Drop the long auto vision dump; keep caption / real words."""
+    if not text:
+        return ""
+    t = text
+    t = re.sub(
+        r"\[The user sent an image~ Here's what I can see:.*?\]\s*(?:\[If you need a closer look.*?~\])?",
+        "",
+        t,
+        flags=re.S,
+    )
+    t = re.sub(r"\[The user sent an image[^\]]*\]", "", t)
+    t = re.sub(r"\[The user sent a text document:[^\]]*\]", "", t)
+    t = re.sub(r"\[If you need a closer look[^\]]*\]", "", t)
+    return t.strip()
+
+
+def safe_media_file(raw: str) -> Path | None:
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except Exception:
+        return None
+    if not resolved.is_file():
+        return None
+    if not any(str(resolved).startswith(str(root) + os.sep) or resolved == root for root in MEDIA_ROOTS):
+        return None
+    return resolved
+
+
+
+PENDING_DIRS = [
+    Path("/root/.hermes/cache/images"),
+    Path("/root/.hermes/cache/documents"),
+]
+PENDING_MAX_AGE = 10 * 60
+
+
+def _filename_claimed(con, name: str) -> bool:
+    row = con.execute(
+        "SELECT 1 FROM messages WHERE content LIKE ? LIMIT 1",
+        (f"%{name}%",),
+    ).fetchone()
+    return bool(row)
+
+
+_PENDING_CACHE = {"t": 0.0, "files": []}
+
+def list_pending_media() -> list:
+    now = time.time()
+    if now - _PENDING_CACHE["t"] < 0.8:
+        return _PENDING_CACHE["files"]
+    files = []
+    for folder in PENDING_DIRS:
+        if not folder.is_dir():
+            continue
+        for f in folder.iterdir():
+            if not f.is_file() or f.name.startswith("."):
+                continue
+            age = now - f.stat().st_mtime
+            if age > PENDING_MAX_AGE:
+                continue
+            files.append(f)
+    if not files:
+        return []
+    con = db()
+    try:
+        out = []
+        for f in sorted(files, key=lambda x: x.stat().st_mtime):
+            if _filename_claimed(con, f.name):
+                continue
+            ext = f.suffix.lower()
+            if ext in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+                kind = "image"
+            elif ext == ".pdf":
+                kind = "pdf"
+            else:
+                kind = "file"
+            out.append({
+                "kind": kind,
+                "src": "/api/live/file?p=" + quote(str(f.resolve()), safe=""),
+                "name": f.name,
+                "exists": True,
+                "path": str(f.resolve()),
+                "mtime": f.stat().st_mtime,
+                "pending": True,
+            })
+        _PENDING_CACHE["t"] = now
+        _PENDING_CACHE["files"] = out
+        return out
+    finally:
+        con.close()
+
+
+def hottest_session_id() -> str | None:
+    con = db()
+    try:
+        row = con.execute(
+            """
+            SELECT s.id
+            FROM sessions s
+            JOIN messages m ON m.session_id = s.id
+            WHERE COALESCE(s.archived, 0) = 0
+              AND (s.source IS NULL OR s.source != 'subagent')
+            GROUP BY s.id
+            ORDER BY MAX(m.timestamp) DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        return row["id"] if row else None
+    finally:
+        con.close()
 
 
 def parse_tool_calls(raw) -> list:
@@ -248,6 +421,8 @@ def list_live_sessions() -> list:
             if r["source"] == "telegram" and chat_id and thread_id:
                 pairs.append((str(chat_id), str(thread_id)))
         resolved = resolve_telegram_topics(pairs)
+        pending = list_pending_media()
+        hot = hottest_session_id() if pending else None
 
         out = []
         for r in rows:
@@ -296,7 +471,8 @@ def list_live_sessions() -> list:
                     "last_ts": r["last_ts"],
                     "last_msg_id": r["last_msg_id"],
                     "preview": snippet,
-                    "typing": typing,
+                    "typing": bool(typing or (pending and r["id"] == hot)),
+                    "pending_media": pending if r["id"] == hot else [],
                     "live": bool(r["last_ts"] and (time.time() - float(r["last_ts"])) <= LIVE_WINDOW_SEC),
                 }
             )
@@ -453,7 +629,7 @@ def build_chat(session_id: str, after: int = 0, limit: int = MSG_LIMIT) -> dict:
                 thinking = thinking.decode("utf-8", "replace")
 
             if role == "user":
-                items.append({"id": r["id"], "kind": "user", "text": content, "timestamp": r["timestamp"]})
+                items.append({"id": r["id"], "kind": "user", "text": display_text(content), "media": extract_media(content), "timestamp": r["timestamp"]})
                 continue
 
             if role == "assistant":
@@ -461,7 +637,8 @@ def build_chat(session_id: str, after: int = 0, limit: int = MSG_LIMIT) -> dict:
                 item = {
                     "id": r["id"],
                     "kind": "assistant",
-                    "text": content,
+                    "text": display_text(content),
+                    "media": extract_media(content),
                     "thinking": thinking,
                     "tools": [],
                     "timestamp": r["timestamp"],
@@ -522,6 +699,7 @@ def build_chat(session_id: str, after: int = 0, limit: int = MSG_LIMIT) -> dict:
                 elif item.get("kind") == "assistant" and item.get("tools"):
                     if any(t.get("fresh") for t in item["tools"]):
                         updates.append(item)
+                        fresh.append(item)  # also in items so an old tab still replaces the bubble
             items = fresh
 
         for card in pending.values():
@@ -533,7 +711,7 @@ def build_chat(session_id: str, after: int = 0, limit: int = MSG_LIMIT) -> dict:
             (session_id,),
         ).fetchone()
         info = dict(meta) if meta else {"id": session_id}
-        return {"items": items, "updates": updates if after else [], "running_tools": running, "last_id": last_id, "session": info, "usage": session_usage_rows(con, session_id)}
+        return {"items": items, "updates": updates if after else [], "running_tools": running, "last_id": last_id, "session": info, "usage": session_usage_rows(con, session_id), "pending_media": list_pending_media()}
     finally:
         con.close()
 
@@ -831,6 +1009,23 @@ class Handler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+
+        if path == "/api/live/file":
+            raw = (qs.get("p") or [""])[0]
+            fpath = safe_media_file(raw)
+            if not fpath:
+                self._json({"error": "not found"}, 404)
+                return
+            ctype = mimetypes.guess_type(str(fpath))[0] or "application/octet-stream"
+            data = fpath.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.send_header("Content-Disposition", f'inline; filename="{fpath.name}"')
+            self.end_headers()
+            self.wfile.write(data)
+            return
 
         if path == "/api/live/status":
             try:
