@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live — Hermes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  :root {
+    --bg: #0e0d0b;
+    --panel: #141310;
+    --head: #1b1915;
+    --lift: #211f1a;
+    --line: #2c2822;
+    --text: #f3eee6;
+    --muted: #8d867b;
+    --gold: #d7b07a;
+    --gold-dim: rgba(215,176,122,.12);
+    --live: #7dba7a;
+    --user: #2f2a22;
+    --agent: #191714;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: "IBM Plex Sans", "Helvetica Neue", sans-serif;
+  }
+  .app {
+    height: 100dvh; max-height: 100dvh; overflow: hidden;
+    display: grid; grid-template-columns: 300px minmax(0,1fr) 280px;
+  }
+  .app.no-subs { grid-template-columns: 300px minmax(0,1fr); }
+  .app.no-subs .right { display: none; }
+  .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .left, .right { background: var(--panel); min-width: 0; overflow: hidden; }
+  .left { border-right: 1px solid var(--line); }
+  .right { border-left: 1px solid var(--line); }
+
+  .side-h {
+    flex-shrink: 0; height: 60px; padding: 0 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--head); border-bottom: 1px solid var(--line);
+  }
+  .side-h strong { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+  .side-h a, .ghost {
+    color: var(--muted); font-size: 12px; text-decoration: none;
+    background: none; border: 0; cursor: pointer; font-family: inherit;
+  }
+  .ghost:hover, .side-h a:hover, .nav a:hover { color: var(--text); }
+  .nav { display: flex; gap: 14px; align-items: center; }
+  .nav a { color: var(--muted); text-decoration: none; font-size: 13px; }
+  .nav a.on { color: var(--gold); }
+  .nav a.bad { color: var(--bad); }
+
+  .list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+  .item {
+    width: 100%; max-width: 100%; min-width: 0;
+    border: 0; background: transparent; color: inherit; text-align: left;
+    display: grid; grid-template-columns: 40px minmax(0,1fr); gap: 10px;
+    padding: 10px 14px; cursor: pointer;
+  }
+  .item + .item { box-shadow: inset 0 1px 0 var(--line); }
+  .item:hover, .item.on { background: var(--lift); }
+  .ava {
+    width: 40px; height: 40px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 13px; font-weight: 600;
+    background: #2a261f; color: var(--gold);
+  }
+  .ava.live { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--live); }
+  .ava.typing {
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--live);
+    animation: typing-ring 1.05s ease-in-out infinite;
+  }
+  @keyframes typing-ring {
+    0%, 100% { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--live); }
+    50% { box-shadow: 0 0 0 2px var(--bg), 0 0 0 6px var(--live); }
+  }
+  .snip.typing { color: var(--live); font-style: italic; }
+  .item > div:last-child { min-width: 0; overflow: hidden; }
+  .who { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; min-width: 0; }
+  .who b { font-size: 14px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .when { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .snip { color: var(--muted); font-size: 12.5px; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tag { color: var(--gold); font-size: 11px; }
+
+  .center { background: var(--bg); }
+  .top {
+    flex-shrink: 0; height: 60px; padding: 0 18px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    background: var(--head); border-bottom: 1px solid var(--line);
+  }
+  .top h2 { font-size: 15px; font-weight: 600; }
+  .top .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .running {
+    display: none; flex-shrink: 0; gap: 6px; flex-wrap: wrap;
+    padding: 8px 18px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .running.show { display: flex; }
+  .pill {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; color: var(--gold); background: var(--gold-dim);
+    border-radius: 999px; padding: 3px 8px;
+  }
+
+  .thread { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 18px 0 28px; }
+  .col { width: min(720px, calc(100% - 40px)); margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+  .row { display: flex; width: 100%; }
+  .row.user { justify-content: flex-end; }
+  .bubble {
+    max-width: min(560px, 84%); min-width: 0; overflow: hidden;
+    border-radius: 16px; padding: 8px 11px 6px;
+  }
+  .row.user .bubble { background: var(--user); border-bottom-right-radius: 4px; }
+  .row.assistant .bubble { background: var(--agent); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .row.has-tools { flex-direction: column; align-items: stretch; gap: 8px; }
+  .md { font-size: 14.5px; line-height: 1.55; overflow-wrap: anywhere; word-break: break-word; }
+  .md > *:first-child { margin-top: 0; }
+  .md > *:last-child { margin-bottom: 0; }
+  .md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin: .55em 0; }
+  .md h1, .md h2, .md h3 { font-size: 1.05em; margin: .7em 0 .35em; letter-spacing: -.02em; }
+  .md ul, .md ol { padding-left: 1.2em; }
+  .md a { color: var(--gold); }
+  .md code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .88em;
+    background: rgba(255,255,255,.06); padding: .1em .35em; border-radius: 4px;
+  }
+  .md pre {
+    background: #12110e; border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; overflow: auto; max-height: 240px;
+  }
+  .md pre code { background: none; padding: 0; }
+  .md blockquote { border-left: 2px solid var(--gold); padding-left: 10px; color: var(--muted); }
+  .time { text-align: right; color: var(--muted); font-size: 10.5px; margin-top: 4px; }
+
+  .think { margin: 0 0 8px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+  .think summary { cursor: pointer; color: var(--gold); font-size: 11px; font-weight: 600; }
+  .think pre {
+    margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;
+    font-family: inherit; color: #c9c1b4;
+  }
+
+  .tools-box {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--panel);
+  }
+  .tools-h {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 10px; background: var(--lift);
+    font-size: 12px; color: var(--muted);
+  }
+  .tools-h b { color: var(--text); font-weight: 600; }
+  .tool-row { border-top: 1px solid var(--line); }
+  .tool-row summary {
+    cursor: pointer; list-style: none;
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
+    padding: 8px 10px;
+  }
+  .tool-row summary::-webkit-details-marker { display: none; }
+  .st { color: var(--muted); }
+  .st.run { color: var(--gold); }
+  .st.done { color: var(--live); }
+  .io { display: grid; grid-template-columns: 1fr 1fr; min-width: 0; background: #12110e; }
+  .io section { min-width: 0; padding: 8px 9px; }
+  .io section + section { border-left: 1px solid var(--line); }
+  .io h4 { color: var(--muted); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 4px; }
+  .io pre {
+    max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; line-height: 1.4; color: #ddd6cb;
+  }
+
+  .search-wrap { flex-shrink: 0; padding: 8px 12px 10px; border-bottom: 1px solid var(--line); }
+  .search-wrap input {
+    width: 100%; background: var(--lift); border: 1px solid var(--line);
+    color: var(--text); border-radius: 10px; padding: 8px 10px; outline: none; font: inherit; font-size: 13px;
+  }
+  .search-wrap input::placeholder { color: var(--muted); }
+  .center { position: relative; }
+  .jump {
+    display: none; position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
+    z-index: 5; border: 0; cursor: pointer;
+    background: var(--gold); color: #1b1915; font: inherit; font-size: 12.5px; font-weight: 650;
+    border-radius: 999px; padding: 8px 14px; box-shadow: 0 6px 20px rgba(0,0,0,.35);
+  }
+  .jump.show { display: flex; align-items: center; gap: 6px; }
+  .usage-foot {
+    margin: 8px 0 18px; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 10px; color: var(--muted); font-size: 12px; background: var(--panel);
+  }
+  .usage-foot b { color: var(--text); font-weight: 600; }
+  .empty { margin: 18vh 16px 0; text-align: center; color: var(--muted); font-size: 14px; }
+  .hint { padding: 16px; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+  .cron-off { opacity: .55; }
+  .cron-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rail-label {
+    padding: 10px 14px 4px; color: var(--muted); font-size: 10.5px;
+    letter-spacing: .14em; text-transform: uppercase; font-weight: 650;
+  }
+  .loading {
+    margin: 18vh auto 0; text-align: center; color: var(--muted);
+  }
+  .loading b { display: block; color: var(--text); font-weight: 600; margin-bottom: 6px; }
+  .dots::after {
+    content: "";
+    animation: dots 1.1s steps(4,end) infinite;
+  }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+
+  @media (max-width: 980px) {
+    .app, .app.no-subs { grid-template-columns: 260px minmax(0,1fr); }
+    .right { display: none; }
+  }
+  @media (max-width: 720px) {
+    .io { grid-template-columns: 1fr; }
+    .io section + section { border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div class="app no-subs" id="app">
+  <aside class="pane left">
+    <div class="side-h">
+      <strong>Chats · 12h</strong>
+    </div>
+    <div class="search-wrap"><input id="chatFilter" type="search" placeholder="Filter topic, chat, preview…"></div>
+    <div class="list" id="chats"></div>
+  </aside>
+
+  <section class="pane center">
+    <div class="top">
+      <div>
+        <h2 id="title">Waiting</h2>
+        <div class="meta" id="meta">Pick a live chat</div>
+      </div>
+      <div class="nav">
+        <a class="on" href="/live">Chats</a>
+        <a href="/cron">Cron</a>
+        <a href="/status" id="statusLink">Status</a>
+        <a href="/">Skills</a>
+      </div>
+      <button class="ghost" id="subToggle" type="button">Subagents</button>
+    </div>
+    <div class="running" id="running"></div>
+    <div class="thread" id="thread">
+      <div class="col" id="col"><div class="empty">No running chat right now.</div></div>
+    </div>
+    <button class="jump" id="jumpLive" type="button">↓ live</button>
+  </section>
+
+  <aside class="pane right">
+    <div class="side-h">
+      <strong>Related</strong>
+      <span id="subCount" style="color:var(--muted);font-size:12px">0</span>
+    </div>
+    <div class="list" id="subs"></div>
+  </aside>
+</div>
+<script>
+if (window.marked) marked.setOptions({ gfm: true, breaks: true });
+
+const app = document.getElementById('app');
+const chatsEl = document.getElementById('chats');
+const subsEl = document.getElementById('subs');
+const col = document.getElementById('col');
+const thread = document.getElementById('thread');
+const titleEl = document.getElementById('title');
+const metaEl = document.getElementById('meta');
+const runningEl = document.getElementById('running');
+const subCount = document.getElementById('subCount');
+const subToggle = document.getElementById('subToggle');
+const chatFilter = document.getElementById('chatFilter');
+const jumpLive = document.getElementById('jumpLive');
+
+let sessions = [];
+let children = [];
+let parentId = null;
+let viewId = null;
+let lastId = 0;
+let es = null;
+let stick = true;
+let forceSubs = false;
+let loadToken = 0;
+let unseen = 0;
+let chatQuery = '';
+const seen = new Set();
+const knownKids = {};
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+function md(text) {
+  const raw = String(text || '');
+  if (!raw.trim()) return '';
+  try {
+    if (window.marked) return marked.parse(raw);
+  } catch {}
+  return esc(raw);
+}
+function clock(ts) {
+  if (!ts) return '';
+  const d = new Date(Number(ts)*1000);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  return d.toLocaleDateString([], {month:'short', day:'numeric'});
+}
+function initial(title) { return ((title || '?').trim()[0] || '?').toUpperCase(); }
+
+function syncLayout() {
+  const show = forceSubs || children.length > 0;
+  app.classList.toggle('no-subs', !show);
+  subToggle.textContent = children.length ? `Subagents · ${children.length}` : 'Subagents';
+}
+
+function filteredSessions() {
+  const q = chatQuery.trim().toLowerCase();
+  if (!q) return sessions;
+  return sessions.filter(s => {
+    const hay = [s.title, s.subtitle, s.chat_name, s.topic, s.preview, s.source, s.session_key]
+      .map(x => String(x || '').toLowerCase()).join(' ');
+    return hay.includes(q);
+  });
+}
+
+function renderChats() {
+  const rows = filteredSessions();
+  if (!sessions.length) {
+    chatsEl.innerHTML = '<div class="empty">No chats in the last 12 hours</div>';
+    return;
+  }
+  if (!rows.length) {
+    chatsEl.innerHTML = '<div class="empty">No chats match that filter</div>';
+    return;
+  }
+  chatsEl.innerHTML = rows.map(s => `
+    <button class="item ${s.id===parentId?'on':''}" data-id="${esc(s.id)}">
+      <div class="ava ${s.typing?'typing':(s.live?'live':'')}">${esc(initial(s.title))}</div>
+      <div>
+        <div class="who"><b>${esc(s.title)}</b><span class="when">${clock(s.last_ts)}</span></div>
+        <div class="snip ${s.typing?'typing':''}">${s.typing ? 'typing…' : esc(s.subtitle || s.chat_name || s.source || '')}${(!s.typing && s.child_count) ? ` · <span class="tag">${s.child_count} sub</span>` : ''}${(!s.typing && s.preview) ? ' · ' + esc(s.preview) : ''}</div>
+      </div>
+    </button>`).join('');
+  chatsEl.querySelectorAll('.item').forEach(b => b.onclick = () => openParent(b.dataset.id));
+}
+
+function childRow(s, letter) {
+  return `<button class="item ${s.id===viewId?'on':''}" data-id="${esc(s.id)}" data-kind="${esc(s.kind||'subagent')}">
+      <div class="ava ${s.live?'live':''}">${letter}</div>
+      <div>
+        <div class="who"><b>${esc(s.title)}</b><span class="when">${clock(s.last_ts)}</span></div>
+        <div class="snip">${s.kind==='branch'?'branch':(s.live?'<span class="tag">running</span>':'subagent')}${s.preview ? ' · ' + esc(s.preview) : ''}</div>
+      </div>
+    </button>`;
+}
+
+function renderSubs() {
+  const branches = children.filter(s => s.kind === 'branch');
+  const agents = children.filter(s => s.kind !== 'branch');
+  subCount.textContent = String(children.length);
+  syncLayout();
+  const main = `<button class="item ${viewId===parentId?'on':''}" data-id="${esc(parentId||'')}">
+    <div class="ava live">M</div>
+    <div>
+      <div class="who"><b>Main thread</b></div>
+      <div class="snip">Parent chat</div>
+    </div>
+  </button>`;
+  if (!children.length) {
+    subsEl.innerHTML = main + '<div class="hint">No branches or subagents in this chat yet.</div>';
+  } else {
+    let html = main;
+    if (branches.length) html += `<div class="rail-label">Branches</div>` + branches.map(s => childRow(s, 'B')).join('');
+    if (agents.length) html += `<div class="rail-label">Subagents</div>` + agents.map(s => childRow(s, 'S')).join('');
+    subsEl.innerHTML = html;
+  }
+  subsEl.querySelectorAll('.item').forEach(b => {
+    b.onclick = () => openView(b.dataset.id, b.dataset.id !== parentId);
+  });
+}
+
+function toolsBox(tools, ids) {
+  if (!tools.length) return '';
+  const anyRun = tools.some(t => t.status === 'running');
+  const rows = tools.map((t, i) => `
+    <details class="tool-row"${t.status==='running'?' open':''} data-tool="${esc(t.id || i)}">
+      <summary><span>${esc(t.name||'tool')}</span><span class="st ${t.status==='running'?'run':'done'}">${t.status==='running'?'running':'done'}</span></summary>
+      <div class="io">
+        <section><h4>Input</h4><pre>${esc(t.input || '—')}</pre></section>
+        <section><h4>Output</h4><pre>${esc(t.output || (t.status==='running' ? 'waiting…' : '—'))}</pre></section>
+      </div>
+    </details>`).join('');
+  return `<div class="tools-box" data-ids="${esc((ids||[]).join(','))}">
+    <div class="tools-h"><b>Tools</b><span>${tools.length}${anyRun ? ' · running' : ''}</span></div>
+    ${rows}
+  </div>`;
+}
+
+function itemHtml(m) {
+  const think = m.thinking
+    ? `<details class="think"${m.text ? '' : ' open'}><summary>Thinking</summary><pre>${esc(m.thinking)}</pre></details>` : '';
+  const text = m.text ? `<div class="md">${md(m.text)}</div>` : '';
+  const tools = m.tools || [];
+  if (!think && !text && !tools.length) return '';
+  const body = (think || text)
+    ? `<div class="bubble">${think}${text}<div class="time">${clock(m.timestamp)}</div></div>`
+    : '';
+  const ids = [m.id].concat(m.merge_ids || []);
+  return `<div class="row ${esc(m.kind)}${tools.length ? ' has-tools' : ''}" data-id="${m.id}" data-ids="${esc(ids.join(','))}">${body}${toolsBox(tools, ids)}</div>`;
+}
+
+function coalesce(items) {
+  const out = [];
+  for (const m of items) {
+    const tools = m.tools || [];
+    const toolOnly = tools.length && !m.text && !m.thinking;
+    const prev = out[out.length - 1];
+    if (toolOnly && prev && (prev.tools || []).length && prev.kind === 'assistant') {
+      prev.tools = prev.tools.concat(tools);
+      prev.merge_ids = (prev.merge_ids || []).concat([m.id]);
+      continue;
+    }
+    out.push({ ...m, tools: tools.slice(), merge_ids: [] });
+  }
+  return out;
+}
+
+function renderRunning(tools) {
+  if (!tools || !tools.length) { runningEl.classList.remove('show'); runningEl.innerHTML=''; return; }
+  runningEl.classList.add('show');
+  runningEl.innerHTML = tools.map(t => `<span class="pill">${esc(t.name)} running</span>`).join('');
+}
+
+function showLoading(name) {
+  if (es) { es.close(); es = null; }
+  seen.clear();
+  lastId = 0;
+  stick = true;
+  unseen = 0;
+  updateJump();
+  renderRunning([]);
+  col.innerHTML = `<div class="loading"><b>Loading ${esc(name || 'chat')}</b><span class="dots">switching</span></div>`;
+}
+
+function updateJump() {
+  if (stick || unseen <= 0) {
+    jumpLive.classList.remove('show');
+    jumpLive.textContent = '↓ live';
+    return;
+  }
+  jumpLive.classList.add('show');
+  jumpLive.textContent = unseen === 1 ? '↓ live' : `↓ ${unseen} new`;
+}
+
+function followLive() {
+  stick = true;
+  unseen = 0;
+  thread.scrollTop = thread.scrollHeight;
+  updateJump();
+}
+
+
+function fmtTok(n) {
+  n = Number(n || 0);
+  if (n >= 1000000) return (n/1000000).toFixed(1) + 'm';
+  if (n >= 1000) return (n/1000).toFixed(n >= 10000 ? 0 : 1) + 'k';
+  return String(n);
+}
+function renderUsage(rows) {
+  document.querySelectorAll('.usage-foot').forEach(el => el.remove());
+  if (!rows || !rows.length) return;
+  const html = rows.map(r => {
+    const bits = [
+      r.model || 'model',
+      (r.calls || 0) + ' calls',
+      fmtTok(r.input_tokens) + ' in',
+      fmtTok(r.output_tokens) + ' out',
+    ];
+    if (r.cache_read_tokens) bits.push(fmtTok(r.cache_read_tokens) + ' cache');
+    if (r.reasoning_tokens) bits.push(fmtTok(r.reasoning_tokens) + ' think');
+    return `<div class="usage-foot">this chat · <b>${esc(bits[0])}</b> · ${esc(bits.slice(1).join(' · '))}</div>`;
+  }).join('');
+  const last = [...col.querySelectorAll('.row.assistant')].pop();
+  if (last) last.insertAdjacentHTML('afterend', html);
+  else col.insertAdjacentHTML('beforeend', html);
+}
+
+function paint(items, reset=false) {
+  const batch = coalesce(items);
+  if (reset) { seen.clear(); col.innerHTML = ''; unseen = 0; }
+  const empty = col.querySelector('.empty, .loading'); if (empty) empty.remove();
+  let added = 0;
+  for (const m of batch) {
+    const ids = [m.id].concat(m.merge_ids || []);
+    if (ids.every(id => seen.has(id))) continue;
+    ids.forEach(id => seen.add(id));
+    const existing = col.querySelector(`[data-id="${m.id}"]`);
+    if (existing) existing.outerHTML = itemHtml(m);
+    else { col.insertAdjacentHTML('beforeend', itemHtml(m)); added += 1; }
+  }
+  if (!col.children.length) col.innerHTML = '<div class="empty">Waiting for the next line…</div>';
+  if (stick) thread.scrollTop = thread.scrollHeight;
+  else if (added && !reset) { unseen += added; updateJump(); }
+  else updateJump();
+}
+
+function startStream(id, after, token) {
+  if (es) { es.close(); es = null; }
+  es = new EventSource(`/api/live/stream?session=${encodeURIComponent(id)}&after=${after}`);
+  es.onmessage = (ev) => {
+    if (token !== loadToken) return;
+    const data = JSON.parse(ev.data);
+    if (data.items && data.items.length) paint(data.items);
+    if (data.last_id) lastId = data.last_id;
+    renderRunning(data.running_tools || []);
+    if (data.usage) renderUsage(data.usage);
+    if (stick) thread.scrollTop = thread.scrollHeight;
+  };
+}
+
+async function loadChildren(pid) {
+  const res = await fetch(`/api/live/sessions/${encodeURIComponent(pid)}/children`);
+  const data = await res.json();
+  children = data.children || [];
+  renderSubs();
+  const ids = children.map(c => c.id);
+  const prev = knownKids[pid];
+  if (!prev) {
+    knownKids[pid] = new Set(ids);
+    return;
+  }
+  const newborn = children.find(c => c.kind !== 'branch' && c.live && !prev.has(c.id));
+  knownKids[pid] = new Set(ids);
+  if (newborn && viewId !== newborn.id) {
+    forceSubs = true;
+    syncLayout();
+    await openView(newborn.id, true);
+  }
+}
+
+async function openView(id, isSub) {
+  const token = ++loadToken;
+  viewId = id;
+  const parent = sessions.find(s => s.id === parentId);
+  const child = children.find(s => s.id === id);
+  const name = (isSub && child) ? child.title : (parent ? parent.title : 'chat');
+  if (isSub && child) {
+    titleEl.textContent = child.title;
+    metaEl.textContent = `${child.kind === 'branch' ? 'Branch' : 'Subagent'} · ${child.status}${child.model ? ' · ' + child.model : ''}`;
+  } else if (parent) {
+    titleEl.textContent = parent.title;
+    metaEl.textContent = `${parent.subtitle || parent.source || ''} · ${parent.model || ''} · live`;
+  }
+  renderChats();
+  renderSubs();
+  showLoading(name);
+  const res = await fetch(`/api/live/sessions/${encodeURIComponent(id)}/messages`);
+  if (token !== loadToken) return;
+  const data = await res.json();
+  paint(data.items || [], true);
+  renderRunning(data.running_tools || []);
+  lastId = data.last_id || 0;
+  startStream(id, lastId, token);
+}
+
+async function openParent(id) {
+  if (id === parentId && viewId === id && col.querySelector('.row')) return;
+  parentId = id;
+  viewId = id;
+  const s = sessions.find(x => x.id === id);
+  titleEl.textContent = s ? s.title : 'Chat';
+  metaEl.textContent = 'Switching…';
+  showLoading(s ? s.title : 'chat');
+  await loadChildren(id);
+  await openView(id, false);
+}
+
+async function refreshSessions() {
+  const res = await fetch('/api/live/sessions');
+  const data = await res.json();
+  sessions = data.sessions || [];
+  renderChats();
+  if (!sessions.length) {
+    if (es) { es.close(); es = null; }
+    parentId = viewId = null;
+    children = [];
+    renderSubs();
+    titleEl.textContent = 'Quiet';
+    metaEl.textContent = 'No running chat';
+    col.innerHTML = '<div class="empty">Nothing live right now.</div>';
+    renderRunning([]);
+    return;
+  }
+  if (!parentId || !sessions.some(s => s.id === parentId)) await openParent(sessions[0].id);
+  else await loadChildren(parentId);
+}
+
+subToggle.onclick = () => { forceSubs = !forceSubs; syncLayout(); };
+jumpLive.onclick = followLive;
+chatFilter.addEventListener('input', () => { chatQuery = chatFilter.value; renderChats(); });
+thread.addEventListener('scroll', () => {
+  const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 90;
+  if (atBottom) { stick = true; unseen = 0; }
+  else stick = false;
+  updateJump();
+});
+async function pingStatus() {
+  try {
+    const s = await (await fetch('/api/live/status')).json();
+    const el = document.getElementById('statusLink');
+    if (el) el.classList.toggle('bad', !s.ok);
+  } catch {}
+}
+refreshSessions();
+pingStatus();
+setInterval(refreshSessions, 3000);
+setInterval(pingStatus, 15000);
+</script>
+</body>
+</html>

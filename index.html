@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes Skills</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<style>
+  :root {
+    --bg: #0b0d10;
+    --surface: #12151a;
+    --surface2: #181c22;
+    --border: #232931;
+    --text: #e8ecf1;
+    --muted: #8b95a3;
+    --accent: #e8623d;
+    --accent2: #f0a05c;
+    --code-bg: #0e1116;
+    --line: #3d4654;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .grain {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .5;
+    background:
+      radial-gradient(1200px 500px at 80% -10%, rgba(232,98,61,.09), transparent 60%),
+      radial-gradient(900px 400px at 10% 110%, rgba(240,160,92,.05), transparent 60%);
+  }
+
+  header {
+    position: relative; z-index: 1;
+    max-width: 1200px; margin: 0 auto; padding: 64px 32px 32px;
+  }
+  .eyebrow {
+    font-size: 12px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin-bottom: 14px;
+  }
+  h1 {
+    font-size: clamp(34px, 5vw, 56px); font-weight: 700; letter-spacing: -.03em;
+    line-height: 1.05; margin-bottom: 16px;
+  }
+  h1 em { font-style: normal; color: var(--accent2); }
+  .sub { color: var(--muted); font-size: 16px; max-width: 560px; line-height: 1.6; }
+  .stats { display: flex; gap: 32px; margin-top: 28px; }
+  .stat b { font-size: 26px; font-weight: 700; letter-spacing: -.02em; display: block; }
+  .stat span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; }
+
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(11,13,16,.82); backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+  }
+  .toolbar-inner {
+    max-width: 1200px; margin: 0 auto; padding: 14px 32px;
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  }
+  .search {
+    flex: 1; min-width: 220px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 11px 16px;
+    color: var(--text); font-size: 14px; outline: none;
+  }
+  .search:focus { border-color: var(--accent); }
+  .search::placeholder { color: var(--muted); }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--muted); font-size: 12.5px; font-weight: 500;
+    padding: 7px 13px; border-radius: 999px; cursor: pointer;
+    transition: all .15s; white-space: nowrap;
+  }
+  .chip:hover { color: var(--text); border-color: #3a434f; }
+  .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  main {
+    position: relative; z-index: 1;
+    max-width: 1200px; margin: 0 auto; padding: 32px 32px 96px;
+  }
+  .grid {
+    display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px; text-align: left; width: 100%;
+    color: inherit; cursor: pointer; font: inherit;
+    transition: transform .18s ease, border-color .18s ease, background .18s ease;
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(232,98,61,.45);
+    background: var(--surface2);
+  }
+  .card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .name {
+    font-size: 15px; font-weight: 650; letter-spacing: -.01em;
+    font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+    word-break: break-all;
+  }
+  .cat {
+    font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--accent2); background: rgba(240,160,92,.1);
+    border: 1px solid rgba(240,160,92,.22);
+    padding: 3px 8px; border-radius: 6px; white-space: nowrap; flex-shrink: 0;
+  }
+  .desc {
+    font-size: 13.5px; color: var(--muted); line-height: 1.55;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .empty { text-align: center; color: var(--muted); padding: 80px 0; font-size: 15px; }
+  .count-line { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+
+  /* Editor overlay */
+  .overlay {
+    position: fixed; inset: 0; z-index: 40;
+    background: rgba(5,6,8,.62);
+    opacity: 0; pointer-events: none; transition: opacity .2s ease;
+  }
+  .overlay.open { opacity: 1; pointer-events: auto; }
+  .editor {
+    position: fixed; inset: 18px; z-index: 50;
+    background: #0e1116; border: 1px solid var(--border); border-radius: 16px;
+    display: none; flex-direction: column; overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,.45);
+  }
+  .editor.open { display: flex; }
+  .editor-bar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    background: #12151a;
+  }
+  .dots { display: flex; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; }
+  .dot.y { background: #febc2e; }
+  .dot.g { background: #28c840; }
+  .file-path {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12.5px; color: var(--muted); flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tabs { display: flex; gap: 6px; }
+  .tab, .icon-btn {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted); border-radius: 8px; padding: 6px 12px;
+    font-size: 12px; cursor: pointer;
+  }
+  .tab.active, .icon-btn:hover { color: var(--text); border-color: #3a434f; background: #1a1f26; }
+  .icon-btn.close { color: #ffb4ab; }
+  .editor-body { flex: 1; display: flex; min-height: 0; }
+  .pane { flex: 1; min-width: 0; overflow: auto; }
+  .pane.split-left { border-right: 1px solid var(--border); }
+  .source {
+    display: grid; grid-template-columns: 56px 1fr;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px; line-height: 1.65;
+  }
+  .gutter {
+    background: #0b0d10; color: var(--line); text-align: right;
+    padding: 20px 10px 40px; user-select: none; border-right: 1px solid var(--border);
+  }
+  .code {
+    padding: 20px 20px 40px; color: #d7dde6; white-space: pre-wrap; word-break: break-word;
+  }
+  .preview {
+    padding: 28px 36px 60px; max-width: 860px; line-height: 1.65; font-size: 15px;
+  }
+  .preview h1, .preview h2, .preview h3, .preview h4 {
+    letter-spacing: -.02em; line-height: 1.25; margin: 1.4em 0 .5em;
+  }
+  .preview h1 { font-size: 28px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  .preview h2 { font-size: 22px; }
+  .preview h3 { font-size: 17px; color: var(--accent2); }
+  .preview p, .preview ul, .preview ol, .preview pre, .preview blockquote, .preview table { margin: .85em 0; }
+  .preview ul, .preview ol { padding-left: 1.3em; }
+  .preview a { color: var(--accent2); }
+  .preview code {
+    font-family: ui-monospace, Menlo, monospace; font-size: .9em;
+    background: #1a1f26; padding: .12em .4em; border-radius: 5px;
+  }
+  .preview pre {
+    background: #0b0d10; border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; overflow: auto;
+  }
+  .preview pre code { background: none; padding: 0; }
+  .preview blockquote {
+    border-left: 3px solid var(--accent); padding-left: 14px; color: var(--muted);
+  }
+  .preview table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  .preview th, .preview td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; }
+  .preview th { background: #161a20; }
+  .status { color: var(--muted); padding: 40px; font-size: 14px; }
+
+  @media (max-width: 860px) {
+    .editor { inset: 0; border-radius: 0; }
+    .editor-body { flex-direction: column; }
+    .pane.split-left { border-right: 0; border-bottom: 1px solid var(--border); max-height: 45%; }
+    header, .toolbar-inner, main { padding-left: 20px; padding-right: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="grain"></div>
+<header>
+  <div class="eyebrow">Hermes Agent · Skill Library</div>
+  <h1>Everything this agent<br><em>knows how to do.</em></h1>
+  <p class="sub">Click a skill to open SKILL.md in a source + markdown preview editor. <a href="/live" style="color:#f0a05c">Live chats</a> · <a href="/cron" style="color:#f0a05c">Cron</a> · <a href="/status" style="color:#f0a05c">Status</a></p>
+  <div class="stats">
+    <div class="stat"><b id="totalSkills">0</b><span>Skills</span></div>
+    <div class="stat"><b id="totalCats">0</b><span>Categories</span></div>
+  </div>
+</header>
+
+<div class="toolbar">
+  <div class="toolbar-inner">
+    <input class="search" id="search" type="text" placeholder="Search skills… (name or description)" autofocus>
+    <div class="chips" id="chips"></div>
+  </div>
+</div>
+
+<main>
+  <div class="count-line" id="countLine"></div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" style="display:none">No skills match that filter.</div>
+</main>
+
+<div class="overlay" id="overlay"></div>
+<div class="editor" id="editor" role="dialog" aria-modal="true">
+  <div class="editor-bar">
+    <div class="dots">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    </div>
+    <div class="file-path" id="filePath">SKILL.md</div>
+    <div class="tabs">
+      <button class="tab active" data-mode="split">Split</button>
+      <button class="tab" data-mode="preview">Preview</button>
+      <button class="tab" data-mode="source">Source</button>
+    </div>
+    <button class="icon-btn close" id="closeBtn">Close</button>
+  </div>
+  <div class="editor-body">
+    <div class="pane split-left" id="sourcePane">
+      <div class="status" id="sourceStatus">Loading…</div>
+      <div class="source" id="sourceWrap" style="display:none">
+        <div class="gutter" id="gutter"></div>
+        <div class="code" id="code"></div>
+      </div>
+    </div>
+    <div class="pane" id="previewPane">
+      <div class="preview" id="preview"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+const grid = document.getElementById('grid');
+const chipsEl = document.getElementById('chips');
+const searchEl = document.getElementById('search');
+const emptyEl = document.getElementById('empty');
+const countLine = document.getElementById('countLine');
+const overlay = document.getElementById('overlay');
+const editor = document.getElementById('editor');
+const filePath = document.getElementById('filePath');
+const sourceStatus = document.getElementById('sourceStatus');
+const sourceWrap = document.getElementById('sourceWrap');
+const gutter = document.getElementById('gutter');
+const codeEl = document.getElementById('code');
+const preview = document.getElementById('preview');
+const sourcePane = document.getElementById('sourcePane');
+const previewPane = document.getElementById('previewPane');
+
+let SKILLS = [];
+let activeCat = 'all';
+let query = '';
+let mode = 'split';
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function catCount(c) { return SKILLS.filter(s => s.category === c).length; }
+
+function renderChips() {
+  const cats = [...new Set(SKILLS.map(s => s.category))].sort();
+  const all = [{c:'all', n: SKILLS.length}, ...cats.map(c => ({c, n: catCount(c)}))];
+  chipsEl.innerHTML = all.map(({c, n}) =>
+    `<button class="chip ${c===activeCat?'active':''}" data-cat="${c}">${c === 'all' ? 'All' : c} · ${n}</button>`
+  ).join('');
+  chipsEl.querySelectorAll('.chip').forEach(ch =>
+    ch.addEventListener('click', () => { activeCat = ch.dataset.cat; renderChips(); renderGrid(); })
+  );
+}
+
+function renderGrid() {
+  const q = query.trim().toLowerCase();
+  const filtered = SKILLS.filter(s =>
+    (activeCat === 'all' || s.category === activeCat) &&
+    (!q || s.name.toLowerCase().includes(q) || (s.description||'').toLowerCase().includes(q))
+  );
+  countLine.textContent = `Showing ${filtered.length} of ${SKILLS.length} skills`;
+  emptyEl.style.display = filtered.length ? 'none' : 'block';
+  grid.innerHTML = filtered.map(s => `
+    <button class="card" data-path="${esc(s.path)}" data-name="${esc(s.name)}">
+      <div class="card-top">
+        <div class="name">${esc(s.name)}</div>
+        <div class="cat">${esc(s.category)}</div>
+      </div>
+      <div class="desc">${esc(s.description || 'No description.')}</div>
+    </button>`).join('');
+  grid.querySelectorAll('.card').forEach(card => {
+    card.addEventListener('click', () => openSkill(card.dataset.path, card.dataset.name));
+  });
+}
+
+function applyMode() {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+  sourcePane.style.display = mode === 'preview' ? 'none' : 'block';
+  previewPane.style.display = mode === 'source' ? 'none' : 'block';
+}
+
+function closeEditor() {
+  editor.classList.remove('open');
+  overlay.classList.remove('open');
+}
+
+function renderMarkdown(md) {
+  if (window.marked) {
+    marked.setOptions({ gfm: true, breaks: false });
+    preview.innerHTML = marked.parse(md);
+    return;
+  }
+  preview.innerHTML = `<pre><code>${esc(md)}</code></pre>`;
+}
+
+async function openSkill(path, name) {
+  filePath.textContent = `skills/${path}`;
+  sourceStatus.style.display = 'block';
+  sourceStatus.textContent = 'Loading…';
+  sourceWrap.style.display = 'none';
+  preview.innerHTML = '<div class="status">Loading…</div>';
+  editor.classList.add('open');
+  overlay.classList.add('open');
+  applyMode();
+
+  try {
+    const res = await fetch('skills/' + path);
+    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    const md = await res.text();
+    const lines = md.split('\n');
+    gutter.innerHTML = lines.map((_, i) => i + 1).join('\n');
+    codeEl.textContent = md;
+    sourceStatus.style.display = 'none';
+    sourceWrap.style.display = 'grid';
+    renderMarkdown(md);
+  } catch (err) {
+    sourceStatus.textContent = 'Failed to load ' + path + ' — ' + err.message;
+    preview.innerHTML = `<div class="status">Could not load ${esc(name)}</div>`;
+  }
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => { mode = tab.dataset.mode; applyMode(); });
+});
+document.getElementById('closeBtn').addEventListener('click', closeEditor);
+overlay.addEventListener('click', closeEditor);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeEditor(); });
+searchEl.addEventListener('input', e => { query = e.target.value; renderGrid(); });
+
+fetch('skills.json')
+  .then(r => r.json())
+  .then(data => {
+    SKILLS = data;
+    document.getElementById('totalSkills').textContent = SKILLS.length;
+    document.getElementById('totalCats').textContent = new Set(SKILLS.map(s => s.category)).size;
+    renderChips();
+    renderGrid();
+  })
+  .catch(() => {
+    countLine.textContent = 'Could not load skills.json';
+  });
+</script>
+</body>
+</html>

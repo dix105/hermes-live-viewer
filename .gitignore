@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.telethon-bot.session
+.telethon-bot.session-journal
+*.session
+skills
+.env
+*.log
+.DS_Store

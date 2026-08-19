@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Status — Hermes</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f0e0c; --panel: #161411; --lift: #1c1915; --text: #f4efe6;
+    --muted: #8a8378; --line: #2a261f; --gold: #e8b86d; --live: #7dba7a; --bad: #d67a6a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font: 14.5px/1.45 "IBM Plex Sans", system-ui, sans-serif; }
+  .app { height: 100%; display: grid; grid-template-columns: 240px minmax(0,1fr); }
+  .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .left { background: var(--panel); border-right: 1px solid var(--line); }
+  .side-h, .top {
+    flex-shrink: 0; height: 58px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 14px; background: var(--lift); border-bottom: 1px solid var(--line);
+  }
+  .side-h strong, .top h2 { font-size: 15px; font-weight: 600; }
+  .nav { display: flex; gap: 14px; }
+  .nav a { color: var(--muted); text-decoration: none; font-size: 13px; }
+  .nav a.on { color: var(--gold); }
+  .nav a.bad { color: var(--bad); }
+  .list { flex: 1; overflow: auto; }
+  .item {
+    display: block; width: 100%; padding: 12px 14px; border: 0; background: transparent;
+    color: inherit; text-align: left; cursor: pointer; font: inherit;
+  }
+  .item:hover { background: rgba(255,255,255,.03); }
+  .item.on { background: #242018; }
+  .item b { display: block; font-weight: 600; }
+  .item span { color: var(--muted); font-size: 12px; }
+  .center { background: #141210; }
+  .thread { flex: 1; overflow: auto; }
+  .col { max-width: 920px; margin: 0 auto; padding: 20px 22px 48px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .card h3 { font-size: 15px; margin-bottom: 10px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: 0; }
+  .k { color: var(--muted); }
+  .ok { color: var(--live); }
+  .bad { color: var(--bad); }
+  .pill { font-size: 12px; font-weight: 650; }
+  pre {
+    background: #12110e; border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+    overflow: auto; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px;
+    white-space: pre-wrap; color: #ddd6cb;
+  }
+  .usage { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .usage th, .usage td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .usage th { color: var(--muted); font-weight: 500; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+  .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .empty { color: var(--muted); }
+  .chart { width: 100%; height: 180px; display: block; }
+  .bars { display: flex; flex-direction: column; gap: 7px; }
+  .bar-row { display: grid; grid-template-columns: 120px minmax(0,1fr) 72px; gap: 8px; align-items: center; cursor: pointer; }
+  .bar-row.on .track { outline: 1px solid var(--gold); }
+  .track { height: 10px; background: #12110e; border-radius: 99px; overflow: hidden; display: flex; }
+  .fill-in { background: var(--gold); height: 100%; }
+  .fill-out { background: #7dba7a; height: 100%; }
+  .legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+  .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .chip { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 99px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  .chip.on { border-color: var(--gold); color: var(--gold); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="pane left">
+    <div class="side-h"><strong>Status</strong></div>
+    <div class="list" id="nav"></div>
+  </aside>
+  <section class="pane center">
+    <header class="top">
+      <h2 id="title">Gateway</h2>
+      <div class="nav">
+        <a href="/live">Chats</a>
+        <a href="/cron">Cron</a>
+        <a class="on" href="/status" id="statusLink">Status</a>
+        <a href="/">Skills</a>
+      </div>
+    </header>
+    <div class="thread"><div class="col" id="col"></div></div>
+  </section>
+</div>
+<script>
+const navEl = document.getElementById('nav');
+const col = document.getElementById('col');
+const titleEl = document.getElementById('title');
+const statusLink = document.getElementById('statusLink');
+let data = null;
+let page = location.hash.replace('#','') || 'overview';
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+function when(iso) {
+  if (!iso) return '—';
+  if (typeof iso === 'number') return new Date(iso*1000).toLocaleString();
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+}
+function n(x) { return Number(x||0).toLocaleString(); }
+
+function renderNav() {
+  const items = [
+    ['overview', 'Overview', data && !data.ok ? 'broken' : (data ? data.gateway_state : '')],
+    ['platforms', 'Platforms', data && data.broken && data.broken.length ? data.broken.join(', ') : ''],
+    ['usage', 'Usage', data && data.usage ? data.usage.length + ' sessions' : ''],
+    ['errors', 'Errors', data && data.errors ? data.errors.length + ' lines' : ''],
+  ];
+  navEl.innerHTML = items.map(([id, label, sub]) => `
+    <button class="item ${page===id?'on':''}" data-id="${id}">
+      <b>${label}</b><span>${esc(sub || '')}</span>
+    </button>`).join('');
+  navEl.querySelectorAll('.item').forEach(b => b.onclick = () => { page = b.dataset.id; location.hash = page; draw(); });
+}
+
+function overview() {
+  const st = data.gateway_state || 'unknown';
+  const cls = data.ok ? 'ok' : 'bad';
+  return `<div class="card">
+    <h3>Gateway <span class="pill ${cls}">${esc(st)}</span></h3>
+    <div class="row"><span class="k">pid</span><span>${esc(data.pid)}</span></div>
+    <div class="row"><span class="k">kind</span><span>${esc(data.kind)}</span></div>
+    <div class="row"><span class="k">active agents</span><span>${esc(data.active_agents)}</span></div>
+    <div class="row"><span class="k">updated</span><span>${esc(when(data.updated_at))}</span></div>
+    <div class="row"><span class="k">broken</span><span class="${data.broken && data.broken.length ? 'bad':''}">${esc((data.broken||[]).join(', ') || 'none')}</span></div>
+  </div>
+  <div class="card">
+    <h3>Processes</h3>
+    ${(data.processes||[]).length ? data.processes.map(p => `<div class="row"><span class="k">${esc(p.pid)}</span><span>${esc(p.session_key || p.task_id || '')}</span></div>`).join('') : '<div class="empty">None tracked</div>'}
+  </div>`;
+}
+
+function platforms() {
+  const entries = Object.entries(data.platforms || {});
+  if (!entries.length) return '<div class="card">No platform state.</div>';
+  return entries.map(([name, p]) => `
+    <div class="card">
+      <h3>${esc(name)} <span class="pill ${p.state==='connected'?'ok':'bad'}">${esc(p.state)}</span></h3>
+      ${p.error_code ? `<div class="row"><span class="k">code</span><span class="bad">${esc(p.error_code)}</span></div>` : ''}
+      ${p.error_message ? `<div class="row"><span class="k">error</span><span>${esc(p.error_message)}</span></div>` : ''}
+      <div class="row"><span class="k">updated</span><span>${esc(when(p.updated_at))}</span></div>
+    </div>`).join('');
+}
+
+let usageData = null;
+let usageFilter = { model: null, day: null };
+
+function tok(v) {
+  v = Number(v || 0);
+  if (v >= 1e6) return (v/1e6).toFixed(1) + 'm';
+  if (v >= 1e3) return (v/1e3).toFixed(v >= 10000 ? 0 : 1) + 'k';
+  return String(Math.round(v));
+}
+
+function filteredChats() {
+  const rows = (usageData && usageData.chats) || [];
+  return rows.filter(r => {
+    if (usageFilter.model && r.model !== usageFilter.model) return false;
+    if (usageFilter.day && r.day !== usageFilter.day) return false;
+    return true;
+  });
+}
+
+function dailyChart(days) {
+  const max = Math.max(1, ...days.map(d => d.input + d.output));
+  const w = 860, h = 180, pad = 22, gap = 3;
+  const bw = (w - pad*2) / days.length;
+  let bars = '';
+  days.forEach((d, i) => {
+    const x = pad + i * bw;
+    const inH = (d.input / max) * (h - 36);
+    const outH = (d.output / max) * (h - 36);
+    const on = usageFilter.day === d.date ? '1' : '.72';
+    bars += `<g data-day="${d.date}" style="cursor:pointer;opacity:${on}">
+      <rect x="${x}" y="${h-18-inH-outH}" width="${Math.max(2,bw-gap)}" height="${Math.max(0,inH)}" fill="#e8b86d"/>
+      <rect x="${x}" y="${h-18-outH}" width="${Math.max(2,bw-gap)}" height="${Math.max(0,outH)}" fill="#7dba7a"/>
+      ${i % 3 === 0 ? `<text x="${x+1}" y="${h-4}" fill="#8a8378" font-size="9">${d.date.slice(5)}</text>` : ''}
+    </g>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${bars}</svg>`;
+}
+
+function usage() {
+  if (!usageData) return '<div class="card">Loading usage…</div>';
+  const days = usageData.days || [];
+  const models = usageData.models || [];
+  const maxM = Math.max(1, ...models.map(m => m.input + m.output));
+  const chats = filteredChats();
+  const chips = [
+    usageFilter.model ? `<button class="chip on" data-clear="model">${esc(usageFilter.model)} ×</button>` : '',
+    usageFilter.day ? `<button class="chip on" data-clear="day">${esc(usageFilter.day)} ×</button>` : '',
+  ].join('');
+  return `<div class="card">
+      <h3>Daily · last 30 days · IST</h3>
+      <div class="legend"><span><i class="sw" style="background:#e8b86d"></i>input</span><span><i class="sw" style="background:#7dba7a"></i>output</span></div>
+      ${dailyChart(days)}
+      <div class="note">${esc(usageData.note || '')} Click a day to filter chats.</div>
+    </div>
+    <div class="card">
+      <h3>By model</h3>
+      <div class="bars">${models.map(m => {
+        const tot = m.input + m.output;
+        const inW = (m.input / maxM) * 100;
+        const outW = (m.output / maxM) * 100;
+        return `<div class="bar-row ${usageFilter.model===m.model?'on':''}" data-model="${esc(m.model)}">
+          <div>${esc(m.model)}</div>
+          <div class="track"><div class="fill-in" style="width:${inW}%"></div><div class="fill-out" style="width:${outW}%"></div></div>
+          <div class="num">${tok(tot)}</div>
+        </div>`;
+      }).join('')}</div>
+    </div>
+    <div class="card">
+      <h3>Chats ${chips ? '· filtered' : ''}</h3>
+      <div class="filters">${chips || '<span class="k">click a model or day</span>'}</div>
+      <table class="usage">
+        <thead><tr><th>Chat</th><th>Model</th><th>Calls</th><th>In</th><th>Out</th><th>Cache</th><th>Think</th></tr></thead>
+        <tbody>${chats.slice(0,40).map(r => `<tr>
+          <td>${esc(r.title)}<div class="k">${esc(r.day || '')}</div></td>
+          <td>${esc(r.model)}</td>
+          <td class="num">${n(r.calls)}</td>
+          <td class="num">${n(r.input_tokens)}</td>
+          <td class="num">${n(r.output_tokens)}</td>
+          <td class="num">${n(r.cache_read_tokens)}</td>
+          <td class="num">${n(r.reasoning_tokens)}</td>
+        </tr>`).join('') || '<tr><td colspan="7" class="empty">No chats in this filter</td></tr>'}</tbody>
+      </table>
+    </div>`;
+}
+
+function errors() {
+  const lines = data.errors || [];
+  if (!lines.length) return '<div class="card">No recent error lines.</div>';
+  return `<div class="card"><h3>Gateway log · errors</h3><pre>${esc(lines.join('\n'))}</pre></div>`;
+}
+
+function draw() {
+  renderNav();
+  const titles = {overview:'Gateway', platforms:'Platforms', usage:'Usage', errors:'Errors'};
+  titleEl.textContent = titles[page] || 'Status';
+  statusLink.classList.toggle('bad', !!(data && !data.ok));
+  col.innerHTML = page==='platforms' ? platforms() : page==='usage' ? usage() : page==='errors' ? errors() : overview();
+}
+
+col.addEventListener('click', (e) => {
+  const clear = e.target.closest('[data-clear]');
+  const model = e.target.closest('[data-model]');
+  const day = e.target.closest('[data-day]');
+  if (!clear && !model && !day) return;
+  if (clear) usageFilter[clear.dataset.clear] = null;
+  else if (model) usageFilter.model = usageFilter.model === model.dataset.model ? null : model.dataset.model;
+  else if (day) usageFilter.day = usageFilter.day === day.dataset.day ? null : day.dataset.day;
+  if (page === 'usage') draw();
+});
+
+async function refresh() {
+  data = await (await fetch('/api/live/status')).json();
+  if (page === 'usage' || !usageData) {
+    try { usageData = await (await fetch('/api/live/usage')).json(); } catch {}
+  }
+  draw();
+}
+refresh();
+setInterval(refresh, 8000);
+</script>
+</body>
+</html>
