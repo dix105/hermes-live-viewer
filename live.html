@@ -388,21 +388,40 @@ function renderSubs() {
   });
 }
 
-function toolsBox(tools, ids) {
-  if (!tools.length) return '';
-  const anyRun = tools.some(t => t.status === 'running');
-  const rows = tools.map((t, i) => `
-    <details class="tool-row"${t.status==='running'?' open':''} data-tool="${esc(t.id || i)}">
+function toolRow(t, i) {
+  return `<details class="tool-row"${t.status==='running'?' open':''} data-tool="${esc(t.id || i)}">
       <summary><span>${esc(t.name||'tool')}</span><span class="st ${t.status==='running'?'run':'done'}">${t.status==='running'?'running':'done'}</span></summary>
       <div class="io">
         <section><h4>Input</h4><pre>${esc(t.input || '—')}</pre></section>
         <section><h4>Output</h4><pre>${esc(t.output || (t.status==='running' ? 'waiting…' : '—'))}</pre></section>
       </div>
-    </details>`).join('');
+    </details>`;
+}
+function toolsBox(tools, ids) {
+  if (!tools.length) return '';
+  const anyRun = tools.some(t => t.status === 'running');
+  const rows = tools.map((t, i) => toolRow(t, i)).join('');
   return `<div class="tools-box" data-ids="${esc((ids||[]).join(','))}">
     <div class="tools-h"><b>Tools</b><span>${tools.length}${anyRun ? ' · running' : ''}</span></div>
     ${rows}
   </div>`;
+}
+function patchTools(tools) {
+  if (!tools || !tools.length) return false;
+  let hit = false;
+  for (const t of tools) {
+    if (!t.id) continue;
+    const row = col.querySelector(`[data-tool="${CSS.escape(String(t.id))}"]`);
+    if (row) { row.outerHTML = toolRow(t); hit = true; }
+  }
+  return hit;
+}
+function applyUpdates(items) {
+  for (const m of items || []) {
+    const el = col.querySelector(`[data-id="${m.id}"]`);
+    if (el) el.outerHTML = itemHtml(m);
+    else patchTools(m.tools || []);
+  }
 }
 
 function itemHtml(m) {
@@ -501,11 +520,20 @@ function paint(items, reset=false) {
   let added = 0;
   for (const m of batch) {
     const ids = [m.id].concat(m.merge_ids || []);
+    const existing = col.querySelector(`[data-id="${m.id}"]`);
+    if (existing) {
+      existing.outerHTML = itemHtml(m);
+      ids.forEach(id => seen.add(id));
+      continue;
+    }
+    if (m.tools && m.tools.length && patchTools(m.tools) && !m.text && !m.thinking) {
+      ids.forEach(id => seen.add(id));
+      continue;
+    }
     if (ids.every(id => seen.has(id))) continue;
     ids.forEach(id => seen.add(id));
-    const existing = col.querySelector(`[data-id="${m.id}"]`);
-    if (existing) existing.outerHTML = itemHtml(m);
-    else { col.insertAdjacentHTML('beforeend', itemHtml(m)); added += 1; }
+    col.insertAdjacentHTML('beforeend', itemHtml(m));
+    added += 1;
   }
   if (!col.children.length) col.innerHTML = '<div class="empty">Waiting for the next line…</div>';
   if (stick) thread.scrollTop = thread.scrollHeight;
@@ -519,6 +547,7 @@ function startStream(id, after, token) {
   es.onmessage = (ev) => {
     if (token !== loadToken) return;
     const data = JSON.parse(ev.data);
+    if (data.updates && data.updates.length) applyUpdates(data.updates);
     if (data.items && data.items.length) paint(data.items);
     if (data.last_id) lastId = data.last_id;
     renderRunning(data.running_tools || []);

@@ -476,6 +476,7 @@ def build_chat(session_id: str, after: int = 0, limit: int = MSG_LIMIT) -> dict:
                     }
                     item["tools"].append(card)
                     if t["id"]:
+                        pending[str(t["id"])] = card
                         pending[t["id"]] = card
                 items.append(item)
                 continue
@@ -483,9 +484,13 @@ def build_chat(session_id: str, after: int = 0, limit: int = MSG_LIMIT) -> dict:
             if role == "tool":
                 cid = r["tool_call_id"]
                 output = tool_output(content)
+                if cid and str(cid) in pending:
+                    cid = str(cid)
                 if cid and cid in pending:
                     pending[cid]["output"] = output
                     pending[cid]["status"] = "done"
+                    if after and r["id"] > after:
+                        pending[cid]["fresh"] = True
                     if not pending[cid]["name"] and r["tool_name"]:
                         pending[cid]["name"] = r["tool_name"]
                 else:
@@ -508,6 +513,17 @@ def build_chat(session_id: str, after: int = 0, limit: int = MSG_LIMIT) -> dict:
                         }
                     )
 
+        updates = []
+        if after:
+            fresh = []
+            for item in items:
+                if item["id"] > after:
+                    fresh.append(item)
+                elif item.get("kind") == "assistant" and item.get("tools"):
+                    if any(t.get("fresh") for t in item["tools"]):
+                        updates.append(item)
+            items = fresh
+
         for card in pending.values():
             if card["status"] == "running":
                 running.append({"id": card["id"], "name": card["name"]})
@@ -517,7 +533,7 @@ def build_chat(session_id: str, after: int = 0, limit: int = MSG_LIMIT) -> dict:
             (session_id,),
         ).fetchone()
         info = dict(meta) if meta else {"id": session_id}
-        return {"items": items, "running_tools": running, "last_id": last_id, "session": info, "usage": session_usage_rows(con, session_id)}
+        return {"items": items, "updates": updates if after else [], "running_tools": running, "last_id": last_id, "session": info, "usage": session_usage_rows(con, session_id)}
     finally:
         con.close()
 
