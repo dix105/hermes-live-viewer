@@ -1105,7 +1105,7 @@ WS_SKIP = {
 }
 WS_SKIP_FILES = {".env", ".term-token", ".telethon-bot.session"}
 WS_MAX_ENTRIES = 400
-WS_MAX_FILE = 200_000
+WS_MAX_FILE = 5_000_000
 
 
 def ws_safe(raw: str) -> Path | None:
