@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workspace — Hermes</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0e0d0b; --panel: #141310; --head: #1b1915; --lift: #211f1a;
+    --line: #2c2822; --text: #f3eee6; --muted: #8d867b; --gold: #d7b07a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 14.5px/1.45 "Instrument Sans", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  .top {
+    flex-shrink: 0; height: 58px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; background: var(--head); border-bottom: 1px solid var(--line);
+  }
+  h1 { font-size: 15px; font-weight: 600; }
+  .nav { display: flex; gap: 14px; }
+  .nav a { color: var(--muted); text-decoration: none; font-size: 13px; }
+  .nav a.on { color: var(--gold); }
+  .wrap { flex: 1; min-height: 0; display: grid; grid-template-columns: 340px minmax(0,1fr); }
+  .tree {
+    border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 8px 0 24px;
+  }
+  .crumb { padding: 8px 12px; color: var(--muted); font: 11px "IBM Plex Mono", monospace;
+    border-bottom: 1px solid var(--line); word-break: break-all; }
+  .row {
+    display: flex; align-items: center; gap: 8px; padding: 4px 12px; cursor: pointer;
+    font: 13px/1.4 "IBM Plex Mono", monospace; white-space: nowrap;
+  }
+  .row:hover { background: var(--lift); }
+  .row.on { background: rgba(215,176,122,.12); color: var(--gold); }
+  .row .ico { width: 14px; color: var(--muted); flex-shrink: 0; }
+  .row.dir .ico { color: var(--gold); }
+  .meta { margin-left: auto; color: var(--muted); font-size: 11px; padding-left: 8px; }
+  .preview { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  .preview h2 {
+    flex-shrink: 0; height: 42px; display: flex; align-items: center; padding: 0 16px;
+    font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--line);
+    font-family: "IBM Plex Mono", monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .preview pre {
+    flex: 1; min-height: 0; overflow: auto; padding: 14px 16px;
+    font: 12.5px/1.5 "IBM Plex Mono", ui-monospace, monospace; white-space: pre-wrap;
+    overflow-wrap: anywhere; color: #ddd6cb;
+  }
+  .empty { color: var(--muted); padding: 24px 16px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Workspace</h1>
+  <div class="nav">
+    <a href="/live">Chats</a>
+    <a href="/cron">Cron</a>
+    <a href="/status">Status</a>
+    <a class="on" href="/workspace">Files</a>
+    <a href="/">Skills</a>
+  </div>
+</header>
+<div class="wrap">
+  <aside class="tree">
+    <div class="crumb" id="crumb">/root</div>
+    <div id="list"></div>
+  </aside>
+  <section class="preview">
+    <h2 id="fname">Pick a file</h2>
+    <pre id="body" class="empty">Heavy folders are skipped: node_modules, venv, .git, dist, …</pre>
+  </section>
+</div>
+<script>
+let cwd = '/root';
+const listEl = document.getElementById('list');
+const crumb = document.getElementById('crumb');
+const fname = document.getElementById('fname');
+const body = document.getElementById('body');
+
+function fmtSize(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+  return (n/1024/1024).toFixed(1) + ' MB';
+}
+
+async function loadDir(path) {
+  cwd = path;
+  crumb.textContent = path;
+  const d = await (await fetch('/api/live/workspace?path=' + encodeURIComponent(path))).json();
+  if (d.error) { listEl.innerHTML = `<div class="empty">${d.error}</div>`; return; }
+  const rows = [];
+  if (d.parent) {
+    rows.push(`<div class="row dir" data-kind="dir" data-path="${d.parent}"><span class="ico">↑</span> ..</div>`);
+  }
+  for (const e of d.entries) {
+    const ico = e.kind === 'dir' ? '▸' : '·';
+    const meta = e.kind === 'dir' ? '' : fmtSize(e.size || 0);
+    rows.push(`<div class="row ${e.kind}" data-kind="${e.kind}" data-path="${e.path}">
+      <span class="ico">${ico}</span><span>${e.name}</span><span class="meta">${meta}</span>
+    </div>`);
+  }
+  if (d.skipped) rows.push(`<div class="empty">skipped ${d.skipped} heavy folders</div>`);
+  listEl.innerHTML = rows.join('') || '<div class="empty">empty</div>';
+  listEl.querySelectorAll('.row').forEach(el => {
+    el.onclick = () => {
+      if (el.dataset.kind === 'dir') loadDir(el.dataset.path);
+      else openFile(el.dataset.path, el);
+    };
+  });
+}
+
+async function openFile(path, el) {
+  listEl.querySelectorAll('.row.on').forEach(x => x.classList.remove('on'));
+  if (el) el.classList.add('on');
+  fname.textContent = path;
+  body.className = '';
+  body.textContent = 'loading…';
+  const d = await (await fetch('/api/live/workspace/file?path=' + encodeURIComponent(path))).json();
+  if (d.error) { body.className = 'empty'; body.textContent = d.error; return; }
+  body.textContent = d.content ?? '';
+}
+
+loadDir('/root');
+</script>
+</body>
+</html>

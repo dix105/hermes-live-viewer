@@ -7,3 +7,4 @@ skills
 .env
 *.log
 .DS_Store
+.term-token

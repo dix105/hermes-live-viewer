@@ -7,7 +7,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <style>
   :root {
     --bg: #0e0d0b;
@@ -29,9 +31,30 @@
     background: var(--bg); color: var(--text);
     font-family: "Instrument Sans", "Helvetica Neue", sans-serif;
   }
+  .shell { height: 100dvh; max-height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
   .app {
-    height: 100dvh; max-height: 100dvh; overflow: hidden;
+    flex: 1; min-height: 0; overflow: hidden;
     display: grid; grid-template-columns: 300px minmax(0,1fr) 280px;
+  }
+  .term-dock {
+    flex-shrink: 0; height: 36px; display: flex; flex-direction: column;
+    border-top: 1px solid var(--line); background: #0f0e0c;
+  }
+  .term-dock.open { height: min(38vh, 340px); }
+  .term-h {
+    flex-shrink: 0; height: 36px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 12px; background: var(--head); color: var(--muted); font-size: 12px; font-weight: 600;
+  }
+  .term-h b { color: var(--text); }
+  #termScreen { flex: 1; min-height: 0; padding: 0 8px 8px; }
+  .term-gate { padding: 16px; max-width: 420px; color: var(--muted); font-size: 13px; }
+  .term-gate input {
+    width: 100%; margin: 8px 0; background: #12110e; border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 8px 10px; font: 13px "IBM Plex Mono", monospace;
+  }
+  .nav a.term-on, .nav button.term-on { color: var(--gold); }
+  .nav button {
+    background: none; border: 0; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; padding: 0;
   }
   .app.no-subs { grid-template-columns: 300px minmax(0,1fr); }
   .app.no-subs .right { display: none; }
@@ -139,7 +162,7 @@
   .time { text-align: right; color: var(--muted); font-size: 10.5px; margin-top: 4px; }
 
   .think { margin: 0 0 8px; color: var(--muted); font-size: 13px; line-height: 1.4; }
-  .think summary { cursor: pointer; color: var(--gold); font-size: 11px; font-weight: 600; }
+  .think summary { cursor: pointer; color: var(--gold); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
   .think pre {
     margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;
     font-family: "Newsreader", "Times New Roman", serif; font-style: italic; color: #c9c1b4;
@@ -159,6 +182,13 @@
   }
   .tools-h b { color: var(--text); font-weight: 600; }
   .tool-row { border-top: 1px solid var(--line); }
+  .tic { width: 14px; height: 14px; flex-shrink: 0; opacity: .85; }
+  .tic svg { display: block; width: 14px; height: 14px; }
+  .tool-row summary > span:first-child { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+  .tool-row summary em {
+    font-style: normal; color: var(--muted); font-weight: 400;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  }
   .tool-row summary {
     cursor: pointer; list-style: none;
     display: flex; justify-content: space-between; align-items: center; gap: 8px;
@@ -206,6 +236,14 @@
   .media-file.missing { color: var(--muted); }
   .pending-media { margin: 8px 0 14px; }
   .pending-media .tag { color: var(--gold); font-size: 12px; margin-bottom: 6px; }
+  .todo-box { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
+  .todo-row { display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 8px; padding: 7px 12px; border-top: 1px solid var(--line); font-size: 13.5px; }
+  .todo-row:first-of-type { border-top: 0; }
+  .todo-mark { color: var(--muted); }
+  .todo-row.completed .todo-mark { color: var(--live); }
+  .todo-row.in_progress .todo-mark { color: var(--gold); }
+  .todo-row.completed span:last-child { color: var(--muted); text-decoration: line-through; }
+  .todo-row.cancelled span:last-child { color: var(--muted); text-decoration: line-through; opacity: .7; }
   .usage-foot {
     margin: 8px 0 18px; padding: 8px 10px; border: 1px solid var(--line);
     border-radius: 10px; color: var(--muted); font-size: 12px; background: var(--panel);
@@ -240,6 +278,7 @@
 </style>
 </head>
 <body>
+<div class="shell">
 <div class="app no-subs" id="app">
   <aside class="pane left">
     <div class="side-h">
@@ -259,6 +298,8 @@
         <a class="on" href="/live">Chats</a>
         <a href="/cron">Cron</a>
         <a href="/status" id="statusLink">Status</a>
+        <button type="button" id="termNav">Term</button>
+        <a href="/workspace">Files</a>
         <a href="/">Skills</a>
       </div>
       <button class="ghost" id="subToggle" type="button">Subagents</button>
@@ -277,6 +318,14 @@
     </div>
     <div class="list" id="subs"></div>
   </aside>
+</div>
+<div class="term-dock" id="termDock">
+  <div class="term-h">
+    <span><b>Terminal</b> · bash PTY</span>
+    <button class="ghost" type="button" id="termClose">Hide</button>
+  </div>
+  <div id="termScreen"></div>
+</div>
 </div>
 <script>
 if (window.marked) marked.setOptions({ gfm: true, breaks: true });
@@ -402,19 +451,109 @@ function renderSubs() {
   });
 }
 
+function extractTodoPayload(raw) {
+  if (!raw) return null;
+  const s = String(raw);
+  const start = s.indexOf('"todos"') >= 0 ? s.indexOf('{') : -1;
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === '{') depth++;
+    else if (s[i] === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          const d = JSON.parse(s.slice(start, i + 1));
+          if (d && Array.isArray(d.todos)) {
+            return { todos: d.todos, rest: (s.slice(0, start) + s.slice(i + 1)).trim() };
+          }
+        } catch {}
+        return null;
+      }
+    }
+  }
+  return null;
+}
+function parseTodos(raw) {
+  const p = extractTodoPayload(raw);
+  return p ? p.todos : null;
+}
+function todoList(todos) {
+  const done = todos.filter(x => x.status === 'completed').length;
+  const rows = todos.map(x => {
+    const st = x.status || 'pending';
+    const mark = st === 'completed' ? '✓' : st === 'in_progress' ? '●' : st === 'cancelled' ? '×' : '○';
+    return `<div class="todo-row ${esc(st)}"><span class="todo-mark">${mark}</span><span>${esc(x.content || x.id)}</span></div>`;
+  }).join('');
+  return `<div class="todo-box" data-tool="todo">
+    <div class="tools-h"><b>${toolIcon('todo')}Todos</b><span>${done}/${todos.length}</span></div>
+    ${rows}
+  </div>`;
+}
+
+function toolIcon(name) {
+  const n = String(name || '').toLowerCase();
+  const svg = (d) => `<span class="tic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg></span>`;
+  if (n === 'thinking' || n === 'brain') return svg('<path d="M9.5 8a2.5 2.5 0 1 1 2.4-3.2A3 3 0 0 1 17 8c1.4.4 2.5 1.7 2.5 3.3 0 1.2-.6 2.2-1.5 2.8V16a2 2 0 0 1-2 2h-1v1h-3v-1H10a2 2 0 0 1-2-2v-1.9A3.3 3.3 0 0 1 6 11.3C6 9.6 7.2 8.3 8.8 8"/>');if (n === 'todo') return svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>');
+  if (n.includes('cron') || n === 'cronjob') return svg('<circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/>');
+  if (n === 'read_file' || n === 'read' || n.startsWith('skill_view')) return svg('<path d="M5 4h9l5 5v11H5z"/><path d="M14 4v5h5"/>');
+  if (n === 'write_file' || n === 'write' || n === 'patch') return svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/>');
+  if (n.includes('search') || n === 'grep') return svg('<circle cx="11" cy="11" r="6"/><path d="M20 20l-3.5-3.5"/>');
+  if (n === 'terminal' || n === 'process' || n === 'execute_code') return svg('<path d="M5 8l4 4-4 4"/><path d="M12 16h7"/>');
+  if (n.startsWith('browser') || n.includes('web_') || n === 'firecrawl') return svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>');
+  if (n.includes('vision') || n.includes('image')) return svg('<rect x="4" y="6" width="16" height="12" rx="2"/><circle cx="9" cy="11" r="1.4"/><path d="M8 16l3-3 3 3 3-4 3 4"/>');
+  if (n === 'delegate_task' || n.includes('subagent')) return svg('<circle cx="8" cy="8" r="2.4"/><circle cx="16" cy="8" r="2.4"/><circle cx="12" cy="16" r="2.4"/><path d="M10 9.2l-1.2 5M14 9.2l1.2 5"/>');
+  if (n.startsWith('memory')) return svg('<path d="M6 8a6 6 0 0 1 12 0c0 4-6 8-6 8S6 12 6 8z"/><path d="M12 16v3"/>');
+  if (n.startsWith('skill')) return svg('<path d="M5 5h10l4 4v10H5z"/><path d="M15 5v4h4"/><path d="M8 13h8M8 16h5"/>');
+  if (n.includes('git') || n === 'github') return svg('<circle cx="12" cy="12" r="3"/><path d="M12 9V6m0 9v3M9 12H6m9 0h3"/>');
+  return svg('<circle cx="12" cy="12" r="8"/><path d="M12 8v4M12 16h.01"/>');
+}
+
+function toolPreview(t) {
+  const raw = (t.input || '').trim();
+  if (!raw || raw === '—') return '';
+  let d = null;
+  try { d = JSON.parse(raw); } catch {}
+  let s = '';
+  if (d && typeof d === 'object') {
+    s = d.command || d.path || d.query || d.url || d.pattern || d.file_path || d.prompt || d.code || '';
+    if (!s && d.arguments && typeof d.arguments === 'object') {
+      const a = d.arguments;
+      s = a.command || a.path || a.query || '';
+    }
+    if (!s) s = raw;
+  } else s = raw;
+  return String(s).replace(/\s+/g, ' ').trim().slice(0, 90);
+}
 function toolRow(t, i) {
+  const todos = (t.name === 'todo') ? (parseTodos(t.output) || parseTodos(t.input)) : null;
+  if (todos) return todoList(todos);
   return `<details class="tool-row"${t.status==='running'?' open':''} data-tool="${esc(t.id || i)}">
-      <summary><span>${esc(t.name||'tool')}</span><span class="st ${t.status==='running'?'run':'done'}">${t.status==='running'?'running':'done'}</span></summary>
+      <summary><span>${toolIcon(t.name)}${esc(t.name||'tool')}${toolPreview(t) ? `<em>${esc(toolPreview(t))}</em>` : ''}</span><span class="st ${t.status==='running'?'run':'done'}">${t.status==='running'?'running':'done'}</span></summary>
       <div class="io">
         <section><h4>Input</h4><pre>${esc(t.input || '—')}</pre></section>
         <section><h4>Output</h4><pre>${esc(t.output || (t.status==='running' ? 'waiting…' : '—'))}</pre></section>
       </div>
     </details>`;
 }
+function mergeTools(list) {
+  const out = [];
+  for (const t of list || []) {
+    if ((t.name || '') === 'todo') {
+      const i = out.findIndex(x => x.name === 'todo');
+      if (i >= 0) out[i] = t;
+      else out.push(t);
+    } else out.push(t);
+  }
+  return out;
+}
 function toolsBox(tools, ids) {
+  tools = mergeTools(tools);
   if (!tools.length) return '';
-  const anyRun = tools.some(t => t.status === 'running');
+  const anyRun = tools.some(t => t.status === 'running' && t.name !== 'todo');
   const rows = tools.map((t, i) => toolRow(t, i)).join('');
+  const onlyTodo = tools.length === 1 && tools[0].name === 'todo';
+  if (onlyTodo) return rows;
   return `<div class="tools-box" data-ids="${esc((ids||[]).join(','))}">
     <div class="tools-h"><b>Tools</b><span>${tools.length}${anyRun ? ' · running' : ''}</span></div>
     ${rows}
@@ -455,9 +594,12 @@ function renderMedia(list) {
 }
 function itemHtml(m) {
   const think = m.thinking
-    ? `<details class="think"${m.text ? '' : ' open'}><summary>Thinking</summary><pre>${esc(m.thinking)}</pre></details>` : '';
+    ? `<details class="think"${m.text ? '' : ' open'}><summary>${toolIcon('thinking')}Thinking</summary><pre>${esc(m.thinking)}</pre></details>` : '';
   const media = renderMedia(m.media);
-  const text = m.text ? `<div class="md">${md(m.text)}</div>` : '';
+  const textTodo = extractTodoPayload(m.text);
+  const text = textTodo
+    ? todoList(textTodo.todos) + (textTodo.rest ? `<div class="md">${md(textTodo.rest)}</div>` : '')
+    : (m.text ? `<div class="md">${md(m.text)}</div>` : '');
   const tools = m.tools || [];
   if (!think && !text && !tools.length && !media) return '';
   const body = (think || text)
@@ -549,21 +691,23 @@ function renderPending(files) {
 function renderUsage(rows) {
   document.querySelectorAll('.usage-foot').forEach(el => el.remove());
   if (!rows || !rows.length) return;
-  const html = rows.map(r => {
-    const bits = [
-      r.model || 'model',
-      (r.calls || 0) + ' calls',
-      fmtTok(r.input_tokens) + ' in',
-      fmtTok(r.output_tokens) + ' out',
-    ];
-    if (r.cache_read_tokens) bits.push(fmtTok(r.cache_read_tokens) + ' cache');
-    if (r.reasoning_tokens) bits.push(fmtTok(r.reasoning_tokens) + ' think');
-    return `<div class="usage-foot">this chat · <b>${esc(bits[0])}</b> · ${esc(bits.slice(1).join(' · '))}</div>`;
-  }).join('');
+  const latest = rows[0];
+  const model = latest.model || 'model';
+  const same = rows.filter(r => (r.model || 'model') === model);
+  const sum = (k) => same.reduce((n, r) => n + (r[k] || 0), 0);
+  const bits = [
+    (sum('calls')) + ' calls',
+    fmtTok(sum('input_tokens')) + ' in',
+    fmtTok(sum('output_tokens')) + ' out',
+    fmtTok(sum('cache_read_tokens')) + ' cache',
+  ];
+  if (sum('reasoning_tokens')) bits.push(fmtTok(sum('reasoning_tokens')) + ' think');
+  const html = `<div class="usage-foot">this chat · <b>${esc(model)}</b> · ${esc(bits.join(' · '))}</div>`;
   const last = [...col.querySelectorAll('.row.assistant')].pop();
   if (last) last.insertAdjacentHTML('afterend', html);
   else col.insertAdjacentHTML('beforeend', html);
 }
+
 
 function paint(items, reset=false) {
   const batch = coalesce(items);
@@ -702,6 +846,81 @@ async function pingStatus() {
     if (el) el.classList.toggle('bad', !s.ok);
   } catch {}
 }
+
+const termDock = document.getElementById('termDock');
+const termScreen = document.getElementById('termScreen');
+const termNav = document.getElementById('termNav');
+let termInst = null, termEs = null, termSid = null;
+
+function termFit() {
+  if (!termInst || !termSid || !termDock.classList.contains('open')) return;
+  const cols = Math.max(40, Math.floor(termScreen.clientWidth / 8.1));
+  const rows = Math.max(8, Math.floor(termScreen.clientHeight / 18));
+  termInst.resize(cols, rows);
+  const token = sessionStorage.getItem('termToken') || '';
+  fetch('/api/term/resize?token=' + encodeURIComponent(token) + '&sid=' + encodeURIComponent(termSid), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rows, cols }),
+  });
+}
+
+function showTermGate(msg) {
+  termScreen.innerHTML = `<div class="term-gate">
+    <p>${msg || 'Paste the term token to open a bash PTY on this host.'}</p>
+    <input id="termTok" type="password" autocomplete="off" placeholder="token">
+    <button class="ghost" type="button" id="termGo">Open</button>
+  </div>`;
+  document.getElementById('termGo').onclick = () => {
+    const v = document.getElementById('termTok').value.trim();
+    if (!v) return;
+    sessionStorage.setItem('termToken', v);
+    startTerm();
+  };
+}
+
+async function startTerm() {
+  const token = sessionStorage.getItem('termToken') || '';
+  if (!token) { showTermGate(); return; }
+  termScreen.innerHTML = '';
+  const open = await fetch('/api/term/open?token=' + encodeURIComponent(token), { method: 'POST' });
+  const data = await open.json();
+  if (!open.ok) {
+    sessionStorage.removeItem('termToken');
+    showTermGate(data.error === 'unauthorized' ? 'Bad token.' : (data.error || 'failed'));
+    return;
+  }
+  termSid = data.id;
+  if (!window.Terminal) { termScreen.textContent = 'xterm failed to load'; return; }
+  termInst = new Terminal({
+    cursorBlink: true, fontSize: 13,
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    theme: { background: '#0f0e0c', foreground: '#f3eee6', cursor: '#d7b07a', selectionBackground: '#3a3124' },
+  });
+  termInst.open(termScreen);
+  termFit();
+  termInst.onData((d) => {
+    fetch('/api/term/in?token=' + encodeURIComponent(token) + '&sid=' + encodeURIComponent(termSid), {
+      method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: d,
+    });
+  });
+  if (termEs) termEs.close();
+  termEs = new EventSource('/api/term/out?token=' + encodeURIComponent(token) + '&sid=' + encodeURIComponent(termSid));
+  termEs.onmessage = (ev) => {
+    try { termInst.write(Uint8Array.from(atob(ev.data), c => c.charCodeAt(0))); } catch {}
+  };
+}
+
+function toggleTerm(open) {
+  const on = open === undefined ? !termDock.classList.contains('open') : open;
+  termDock.classList.toggle('open', on);
+  if (termNav) termNav.classList.toggle('term-on', on);
+  if (on && !termInst) startTerm();
+  else if (on) setTimeout(termFit, 50);
+}
+
+if (termNav) termNav.onclick = () => toggleTerm();
+document.getElementById('termClose').onclick = () => toggleTerm(false);
+window.addEventListener('resize', termFit);
 refreshSessions();
 pingStatus();
 setInterval(refreshSessions, 3000);

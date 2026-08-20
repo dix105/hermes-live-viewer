@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Term — Hermes</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0e0c; --panel: #161411; --lift: #1c1915; --text: #f4efe6;
+    --muted: #8a8378; --line: #2a261f; --gold: #e8b86d; --bad: #d67a6a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font: 14.5px/1.45 "Instrument Sans", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  .top {
+    flex-shrink: 0; height: 58px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; background: var(--lift); border-bottom: 1px solid var(--line);
+  }
+  h1 { font-size: 15px; font-weight: 600; }
+  .nav { display: flex; gap: 14px; }
+  .nav a { color: var(--muted); text-decoration: none; font-size: 13px; }
+  .nav a.on { color: var(--gold); }
+  #screen { flex: 1; min-height: 0; padding: 10px 12px 12px; }
+  .gate {
+    max-width: 420px; margin: 12vh auto; padding: 18px; border: 1px solid var(--line);
+    border-radius: 14px; background: var(--panel);
+  }
+  .gate p { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .gate input {
+    width: 100%; background: #12110e; border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 10px 12px; font: 13px "IBM Plex Mono", monospace; margin-bottom: 10px;
+  }
+  .gate button, .ghost {
+    background: var(--gold); color: #1b1915; border: 0; border-radius: 10px;
+    padding: 8px 14px; font: inherit; font-weight: 650; cursor: pointer;
+  }
+  .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Term</h1>
+  <div class="nav">
+    <a href="/live">Chats</a>
+    <a href="/cron">Cron</a>
+    <a href="/status">Status</a>
+    <a class="on" href="/term">Term</a>
+    <a href="/workspace">Files</a>
+    <a href="/">Skills</a>
+  </div>
+</header>
+<div id="screen"></div>
+<script>
+const screen = document.getElementById('screen');
+const params = new URLSearchParams(location.search);
+let token = params.get('token') || sessionStorage.getItem('termToken') || '';
+
+function gate() {
+  screen.innerHTML = `<div class="gate">
+    <p>This is a live bash PTY on this host. Paste the term token.</p>
+    <input id="tok" type="password" autocomplete="off" placeholder="token">
+    <button type="button" id="go">Open</button>
+    <div class="err" id="err"></div>
+  </div>`;
+  document.getElementById('go').onclick = () => {
+    token = document.getElementById('tok').value.trim();
+    if (!token) return;
+    sessionStorage.setItem('termToken', token);
+    boot();
+  };
+}
+
+async function boot() {
+  screen.innerHTML = '';
+  const open = await fetch('/api/term/open?token=' + encodeURIComponent(token), { method: 'POST' });
+  const data = await open.json();
+  if (!open.ok) {
+    sessionStorage.removeItem('termToken');
+    gate();
+    const err = document.getElementById('err');
+    if (err) err.textContent = data.error || 'auth failed';
+    return;
+  }
+  const sid = data.id;
+  const term = new Terminal({
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    theme: { background: '#0f0e0c', foreground: '#f4efe6', cursor: '#e8b86d', selectionBackground: '#3a3124' },
+    convertEol: false,
+  });
+  term.open(screen);
+  const fit = () => {
+    const cols = Math.max(40, Math.floor(screen.clientWidth / 8.1));
+    const rows = Math.max(12, Math.floor(screen.clientHeight / 18));
+    term.resize(cols, rows);
+    fetch('/api/term/resize?token=' + encodeURIComponent(token) + '&sid=' + encodeURIComponent(sid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows, cols }),
+    });
+  };
+  fit();
+  window.addEventListener('resize', fit);
+  term.onData((d) => {
+    fetch('/api/term/in?token=' + encodeURIComponent(token) + '&sid=' + encodeURIComponent(sid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body: d,
+    });
+  });
+  const es = new EventSource('/api/term/out?token=' + encodeURIComponent(token) + '&sid=' + encodeURIComponent(sid));
+  es.onmessage = (ev) => {
+    try { term.write(Uint8Array.from(atob(ev.data), c => c.charCodeAt(0))); } catch {}
+  };
+  es.onerror = () => {};
+}
+
+if (token) boot();
+else gate();
+</script>
+</body>
+</html>

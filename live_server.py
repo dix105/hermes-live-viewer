@@ -3,11 +3,20 @@
 
 from __future__ import annotations
 
+import base64
+import fcntl
+import hmac
 import json
 import mimetypes
 import os
+import pty
 import re
+import secrets
+import select
 import sqlite3
+import struct
+import termios
+import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -987,6 +996,180 @@ def gateway_status() -> dict:
 
 
 
+TERM_TOKEN_PATH = ROOT / ".term-token"
+_TERM = {}
+_TERM_LOCK = threading.Lock()
+
+
+def get_term_token() -> str:
+    if TERM_TOKEN_PATH.exists():
+        tok = TERM_TOKEN_PATH.read_text().strip()
+        if tok:
+            return tok
+    tok = secrets.token_urlsafe(24)
+    TERM_TOKEN_PATH.write_text(tok + "\n")
+    os.chmod(TERM_TOKEN_PATH, 0o600)
+    return tok
+
+
+def term_ok(qs, headers) -> bool:
+    got = (qs.get("token") or [""])[0] or (headers.get("X-Term-Token") or "")
+    want = get_term_token()
+    if not got or not want:
+        return False
+    return hmac.compare_digest(str(got), str(want))
+
+
+class TermSession:
+    def __init__(self):
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir("/root")
+            os.environ["TERM"] = "xterm-256color"
+            os.execv("/bin/bash", ["bash", "-l"])
+        self.pid = pid
+        self.fd = fd
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+        self.buf = bytearray()
+        self.lock = threading.Lock()
+        self.alive = True
+        self.touched = time.time()
+        threading.Thread(target=self._pump, daemon=True).start()
+
+    def _pump(self):
+        while self.alive:
+            try:
+                r, _, _ = select.select([self.fd], [], [], 0.4)
+            except Exception:
+                break
+            if self.fd not in r:
+                continue
+            try:
+                chunk = os.read(self.fd, 8192)
+            except OSError:
+                break
+            if not chunk:
+                break
+            with self.lock:
+                self.buf.extend(chunk)
+                if len(self.buf) > 250000:
+                    del self.buf[: len(self.buf) - 120000]
+        self.alive = False
+
+    def pull(self) -> bytes:
+        with self.lock:
+            data = bytes(self.buf)
+            self.buf.clear()
+            return data
+
+    def write(self, data: bytes) -> None:
+        self.touched = time.time()
+        os.write(self.fd, data)
+
+    def resize(self, rows: int, cols: int) -> None:
+        winsize = struct.pack("HHHH", max(2, rows), max(10, cols), 0, 0)
+        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, winsize)
+
+    def close(self) -> None:
+        self.alive = False
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+        try:
+            os.kill(self.pid, 15)
+        except OSError:
+            pass
+
+
+def term_get(sid: str) -> TermSession | None:
+    with _TERM_LOCK:
+        s = _TERM.get(sid)
+        if s and time.time() - s.touched > 45 * 60:
+            s.close()
+            _TERM.pop(sid, None)
+            return None
+        return s
+
+
+
+WS_ROOT = Path("/root").resolve()
+WS_SKIP = {
+    "node_modules", "venv", ".venv", "env", "__pycache__", ".git",
+    "dist", "build", ".next", "target", "vendor", ".cache", "site-packages",
+    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "coverage",
+    ".turbo", ".parcel-cache", "bower_components", ".gradle", ".idea",
+    ".npm", ".yarn", "Pods", "Carthage", ".terraform", ".uv",
+    "hermes-agent/.git",
+}
+WS_SKIP_FILES = {".env", ".term-token", ".telethon-bot.session"}
+WS_MAX_ENTRIES = 400
+WS_MAX_FILE = 200_000
+
+
+def ws_safe(raw: str) -> Path | None:
+    if not raw:
+        return None
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except Exception:
+        return None
+    root = str(WS_ROOT)
+    s = str(resolved)
+    if s != root and not s.startswith(root + os.sep):
+        return None
+    return resolved
+
+
+def ws_list(path: Path) -> dict:
+    entries = []
+    skipped = 0
+    try:
+        items = sorted(path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+    except PermissionError:
+        return {"error": "permission denied", "entries": [], "path": str(path)}
+    for f in items:
+        name = f.name
+        if f.is_dir() and (name in WS_SKIP or (name.startswith(".") and name not in {".hermes", ".openclaw", ".config"})):
+            skipped += 1
+            continue
+        if name in WS_SKIP_FILES:
+            continue
+        kind = "dir" if f.is_dir() else "file"
+        size = 0
+        if kind == "file":
+            try:
+                size = f.stat().st_size
+            except OSError:
+                continue
+        entries.append({"name": name, "path": str(f), "kind": kind, "size": size})
+        if len(entries) >= WS_MAX_ENTRIES:
+            break
+    parent = str(path.parent) if path != WS_ROOT else None
+    if parent and not str(Path(parent).resolve()).startswith(str(WS_ROOT)):
+        parent = None
+    return {"path": str(path), "parent": parent, "entries": entries, "skipped": skipped}
+
+
+def ws_read(path: Path) -> dict:
+    if not path.is_file():
+        return {"error": "not a file"}
+    if path.name in WS_SKIP_FILES or path.suffix in {".sqlite", ".db", ".pyc", ".so", ".woff", ".woff2"}:
+        return {"error": "skipped binary/secret"}
+    try:
+        size = path.stat().st_size
+    except OSError as e:
+        return {"error": str(e)}
+    if size > WS_MAX_FILE:
+        return {"error": f"file too large ({size} bytes, cap {WS_MAX_FILE})"}
+    data = path.read_bytes()
+    if b"\x00" in data[:4096]:
+        return {"error": "binary file"}
+    return {"path": str(path), "content": data.decode("utf-8", errors="replace"), "size": size}
+
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -1108,6 +1291,60 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             return
 
+        if path == "/api/term/out":
+            if not term_ok(qs, self.headers):
+                self._json({"error": "unauthorized"}, 401)
+                return
+            sid = (qs.get("sid") or [""])[0]
+            sess = term_get(sid)
+            if not sess:
+                self._json({"error": "no session"}, 404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            try:
+                idle = 0
+                while idle < 200:
+                    data = sess.pull()
+                    if data:
+                        idle = 0
+                        b64 = base64.b64encode(data).decode("ascii")
+                        self.wfile.write(("data: " + b64 + chr(10) + chr(10)).encode("ascii"))
+                        self.wfile.flush()
+                    else:
+                        idle += 1
+                        self.wfile.write(b": ping" + bytes((10, 10)))
+                        self.wfile.flush()
+                    time.sleep(0.05)
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            return
+
+        if path == "/api/live/workspace":
+            raw = (qs.get("path") or ["/root"])[0]
+            folder = ws_safe(raw)
+            if not folder or not folder.is_dir():
+                self._json({"error": "not found"}, 404)
+                return
+            self._json(ws_list(folder))
+            return
+
+        if path == "/api/live/workspace/file":
+            raw = (qs.get("path") or [""])[0]
+            fpath = ws_safe(raw)
+            if not fpath:
+                self._json({"error": "not found"}, 404)
+                return
+            self._json(ws_read(fpath))
+            return
+
+        if path == "/workspace":
+            self.path = "/workspace.html"
+        if path == "/term":
+            self.path = "/term.html"
         if path == "/live":
             self.path = "/live.html"
         if path == "/cron":
@@ -1116,10 +1353,62 @@ class Handler(SimpleHTTPRequestHandler):
             self.path = "/status.html"
         return super().do_GET()
 
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        qs = parse_qs(parsed.query)
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length > 0 else b""
+
+        if path == "/api/term/open":
+            if not term_ok(qs, self.headers):
+                self._json({"error": "unauthorized"}, 401)
+                return
+            sid = secrets.token_hex(8)
+            with _TERM_LOCK:
+                if len(_TERM) >= 3:
+                    old = next(iter(_TERM))
+                    _TERM.pop(old).close()
+                _TERM[sid] = TermSession()
+            self._json({"id": sid})
+            return
+
+        if path == "/api/term/in":
+            if not term_ok(qs, self.headers):
+                self._json({"error": "unauthorized"}, 401)
+                return
+            sess = term_get((qs.get("sid") or [""])[0])
+            if not sess:
+                self._json({"error": "no session"}, 404)
+                return
+            if raw:
+                sess.write(raw)
+            self._json({"ok": True})
+            return
+
+        if path == "/api/term/resize":
+            if not term_ok(qs, self.headers):
+                self._json({"error": "unauthorized"}, 401)
+                return
+            sess = term_get((qs.get("sid") or [""])[0])
+            if not sess:
+                self._json({"error": "no session"}, 404)
+                return
+            try:
+                body = json.loads(raw.decode("utf-8") or "{}")
+            except Exception:
+                body = {}
+            sess.resize(int(body.get("rows") or 24), int(body.get("cols") or 80))
+            self._json({"ok": True})
+            return
+
+        self._json({"error": "not found"}, 404)
+
 
 def main():
     server = ThreadingHTTPServer(("0.0.0.0", 8471), Handler)
-    print("skills+live http://0.0.0.0:8471/  chat=/live", flush=True)
+    get_term_token()
+    print("skills+live http://0.0.0.0:8471/  chat=/live term=/term", flush=True)
     server.serve_forever()
 
 
