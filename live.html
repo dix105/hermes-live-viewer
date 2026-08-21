@@ -410,7 +410,7 @@ function renderChats() {
       <div class="ava ${s.typing?'typing':(s.live?'live':'')}">${esc(initial(s.title))}</div>
       <div>
         <div class="who"><b>${esc(s.title)}</b><span class="when">${clock(s.last_ts)}</span></div>
-        <div class="snip ${s.typing?'typing':''}">${s.typing ? 'typing…' : esc(s.subtitle || s.chat_name || s.source || '')}${(!s.typing && s.child_count) ? ` · <span class="tag">${s.child_count} sub</span>` : ''}${(!s.typing && s.preview) ? ' · ' + esc(s.preview) : ''}</div>
+        <div class="snip ${s.typing?'typing':''}">${s.typing ? 'typing…' : esc(s.subtitle || s.chat_name || s.source || '')}${(!s.typing && s.preview) ? ' · ' + esc(s.preview) : ''}</div>
       </div>
     </button>`).join('');
   chatsEl.querySelectorAll('.item').forEach(b => b.onclick = () => openParent(b.dataset.id));
@@ -688,9 +688,12 @@ function renderPending(files) {
   if (stick) thread.scrollTop = thread.scrollHeight;
 }
 
+
 function renderUsage(rows) {
-  document.querySelectorAll('.usage-foot').forEach(el => el.remove());
+  document.querySelectorAll('.usage-foot, .orb-foot').forEach(el => el.remove());
   if (!rows || !rows.length) return;
+  const s = sessions.find(x => x.id === parentId || x.id === viewId);
+  if ((s && s.typing) || col.querySelector('.st.run')) return;
   const latest = rows[0];
   const model = latest.model || 'model';
   const same = rows.filter(r => (r.model || 'model') === model);

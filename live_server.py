@@ -422,6 +422,20 @@ def list_live_sessions() -> list:
             """,
             (time.time() - LIST_WINDOW_SEC,),
         ).fetchall()
+        seen_tg = set()
+        deduped = []
+        for r in rows:
+            if (r["source"] or "") == "telegram":
+                origin0 = _origin(r["origin_json"])
+                cid = r["chat_id"] or origin0.get("chat_id")
+                tid = r["thread_id"] or origin0.get("thread_id")
+                key = (str(cid), str(tid))
+                if cid and key in seen_tg:
+                    continue
+                if cid:
+                    seen_tg.add(key)
+            deduped.append(r)
+        rows = deduped
         pairs = []
         for r in rows:
             origin = _origin(r["origin_json"])
