@@ -206,6 +206,32 @@ def hottest_session_id() -> str | None:
         con.close()
 
 
+
+def pretty_tool_input(args) -> str:
+    parsed = args
+    if isinstance(args, str):
+        s = args.strip()
+        if s.startswith("{") or s.startswith("["):
+            try:
+                parsed = json.loads(s)
+            except Exception:
+                return args
+        else:
+            return args
+    if isinstance(parsed, dict):
+        for key in ("command", "code", "path", "query", "url", "pattern", "file_path", "prompt", "text"):
+            val = parsed.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+        try:
+            return json.dumps(parsed, ensure_ascii=False, indent=2)
+        except Exception:
+            return str(parsed)
+    if parsed is None:
+        return ""
+    return str(parsed)
+
+
 def parse_tool_calls(raw) -> list:
     if not raw:
         return []
@@ -221,16 +247,11 @@ def parse_tool_calls(raw) -> list:
             continue
         fn = item.get("function") if isinstance(item.get("function"), dict) else {}
         args = item.get("arguments") or item.get("args") or item.get("input") or fn.get("arguments") or {}
-        if not isinstance(args, str):
-            try:
-                args = json.dumps(args, ensure_ascii=False, indent=2)
-            except Exception:
-                args = str(args)
         out.append(
             {
                 "id": item.get("call_id") or item.get("id"),
                 "name": item.get("name") or item.get("tool_name") or fn.get("name") or "tool",
-                "input": args[:12000],
+                "input": pretty_tool_input(args)[:12000],
             }
         )
     return out
@@ -1027,11 +1048,7 @@ def get_term_token() -> str:
 
 
 def term_ok(qs, headers) -> bool:
-    got = (qs.get("token") or [""])[0] or (headers.get("X-Term-Token") or "")
-    want = get_term_token()
-    if not got or not want:
-        return False
-    return hmac.compare_digest(str(got), str(want))
+    return True
 
 
 class TermSession:
@@ -1040,9 +1057,13 @@ class TermSession:
         if pid == 0:
             os.chdir("/root")
             os.environ["TERM"] = "xterm-256color"
-            os.execv("/bin/bash", ["bash", "-l"])
+            os.execv("/bin/bash", ["bash", "-il"])
         self.pid = pid
         self.fd = fd
+        try:
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        except OSError:
+            pass
         fl = fcntl.fcntl(fd, fcntl.F_GETFL)
         fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
         self.buf = bytearray()

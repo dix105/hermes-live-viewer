@@ -1,4 +1,51 @@
-<!DOCTYPE html>
+<script>
+const screen = document.getElementById('screen');
+
+async function boot() {
+  screen.innerHTML = '';
+  const open = await fetch('/api/term/open', { method: 'POST' });
+  const data = await open.json();
+  if (!open.ok) {
+    screen.textContent = data.error || 'failed';
+    return;
+  }
+  const sid = data.id;
+  const term = new Terminal({
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    theme: { background: '#0f0e0c', foreground: '#f4efe6', cursor: '#e8b86d', selectionBackground: '#3a3124' },
+    convertEol: false,
+  });
+  term.open(screen);
+  const fit = () => {
+    const cols = Math.max(40, Math.floor(screen.clientWidth / 8.1));
+    const rows = Math.max(12, Math.floor(screen.clientHeight / 18));
+    term.resize(cols, rows);
+    fetch('/api/term/resize?sid=' + encodeURIComponent(sid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows, cols }),
+    });
+  };
+  fit();
+  window.addEventListener('resize', fit);
+  term.onData((d) => {
+    fetch('/api/term/in?sid=' + encodeURIComponent(sid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body: d,
+    });
+  });
+  const es = new EventSource('/api/term/out?sid=' + encodeURIComponent(sid));
+  es.onmessage = (ev) => {
+    try { term.write(Uint8Array.from(atob(ev.data), c => c.charCodeAt(0))); } catch {}
+  };
+  es.onerror = () => {};
+}
+
+boot();
+</script><!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">

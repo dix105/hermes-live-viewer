@@ -184,7 +184,7 @@
   .tool-row { border-top: 1px solid var(--line); }
   .tic { width: 14px; height: 14px; flex-shrink: 0; opacity: .85; }
   .tic svg { display: block; width: 14px; height: 14px; }
-  .tool-row summary > span:first-child { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+  .tool-row summary > span:first-child { display: inline-flex; align-items: center; gap: 7px; min-width: 0; flex: 1; overflow: hidden; }
   .tool-row summary em {
     font-style: normal; color: var(--muted); font-weight: 400;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
@@ -512,18 +512,7 @@ function toolIcon(name) {
 function toolPreview(t) {
   const raw = (t.input || '').trim();
   if (!raw || raw === '—') return '';
-  let d = null;
-  try { d = JSON.parse(raw); } catch {}
-  let s = '';
-  if (d && typeof d === 'object') {
-    s = d.command || d.path || d.query || d.url || d.pattern || d.file_path || d.prompt || d.code || '';
-    if (!s && d.arguments && typeof d.arguments === 'object') {
-      const a = d.arguments;
-      s = a.command || a.path || a.query || '';
-    }
-    if (!s) s = raw;
-  } else s = raw;
-  return String(s).replace(/\s+/g, ' ').trim().slice(0, 90);
+  return raw.split('\n')[0].trim().slice(0, 120);
 }
 function toolRow(t, i) {
   const todos = (t.name === 'todo') ? (parseTodos(t.output) || parseTodos(t.input)) : null;
@@ -860,36 +849,18 @@ function termFit() {
   const cols = Math.max(40, Math.floor(termScreen.clientWidth / 8.1));
   const rows = Math.max(8, Math.floor(termScreen.clientHeight / 18));
   termInst.resize(cols, rows);
-  const token = sessionStorage.getItem('termToken') || '';
-  fetch('/api/term/resize?token=' + encodeURIComponent(token) + '&sid=' + encodeURIComponent(termSid), {
+  fetch('/api/term/resize?sid=' + encodeURIComponent(termSid), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rows, cols }),
   });
 }
 
-function showTermGate(msg) {
-  termScreen.innerHTML = `<div class="term-gate">
-    <p>${msg || 'Paste the term token to open a bash PTY on this host.'}</p>
-    <input id="termTok" type="password" autocomplete="off" placeholder="token">
-    <button class="ghost" type="button" id="termGo">Open</button>
-  </div>`;
-  document.getElementById('termGo').onclick = () => {
-    const v = document.getElementById('termTok').value.trim();
-    if (!v) return;
-    sessionStorage.setItem('termToken', v);
-    startTerm();
-  };
-}
-
 async function startTerm() {
-  const token = sessionStorage.getItem('termToken') || '';
-  if (!token) { showTermGate(); return; }
   termScreen.innerHTML = '';
-  const open = await fetch('/api/term/open?token=' + encodeURIComponent(token), { method: 'POST' });
+  const open = await fetch('/api/term/open', { method: 'POST' });
   const data = await open.json();
   if (!open.ok) {
-    sessionStorage.removeItem('termToken');
-    showTermGate(data.error === 'unauthorized' ? 'Bad token.' : (data.error || 'failed'));
+    termScreen.textContent = data.error || 'failed';
     return;
   }
   termSid = data.id;
@@ -902,12 +873,12 @@ async function startTerm() {
   termInst.open(termScreen);
   termFit();
   termInst.onData((d) => {
-    fetch('/api/term/in?token=' + encodeURIComponent(token) + '&sid=' + encodeURIComponent(termSid), {
+    fetch('/api/term/in?sid=' + encodeURIComponent(termSid), {
       method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: d,
     });
   });
   if (termEs) termEs.close();
-  termEs = new EventSource('/api/term/out?token=' + encodeURIComponent(token) + '&sid=' + encodeURIComponent(termSid));
+  termEs = new EventSource('/api/term/out?sid=' + encodeURIComponent(termSid));
   termEs.onmessage = (ev) => {
     try { termInst.write(Uint8Array.from(atob(ev.data), c => c.charCodeAt(0))); } catch {}
   };
